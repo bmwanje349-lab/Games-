@@ -83,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-racer/build
-          "$GODOT_BIN" --headless --path mobile-racer --export-debug "Android" mobile-racer/build/Turbo-Trails-Android.apk
+          "$GODOT_BIN" --headless --path mobile-racer --export-debug "Android" "$GITHUB_WORKSPACE/mobile-racer/build/Turbo-Trails-Android.apk"
           test -s mobile-racer/build/Turbo-Trails-Android.apk
           ls -lh mobile-racer/build/Turbo-Trails-Android.apk
 
