@@ -349,7 +349,7 @@ func _make_ribbon(parent: Node3D, node_name: String, left_offset: float, right_o
 
 func _build_route_surface() -> void:
     var route: Dictionary = ROUTES[route_index]
-    var asphalt: Material = _mat(route["asphalt"], 0.92, 0.03)
+    var asphalt: Material = _make_asphalt_material(route)
     var shoulder: Material = _mat(route["shoulder"], 0.94)
     var edge_paint := _mat(Color(0.94, 0.91, 0.78), 0.78)
     var yellow_paint := _mat(Color(1.0, 0.70, 0.08), 0.74)
@@ -363,6 +363,7 @@ func _build_route_surface() -> void:
 
     # Intermittent white lane marks give the road scale without creating thousands of nodes.
     _make_dashed_lane_markings()
+    _make_racing_curbs(route)
 
     var rail_mat := _mat(Color(0.54, 0.60, 0.65), 0.32, 0.72)
     var rail_glint := _mat(Color(0.79, 0.84, 0.88), 0.3, 0.66)
@@ -371,6 +372,58 @@ func _build_route_surface() -> void:
     _make_ribbon(course_root, "LeftGuardrailTop", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 1.05, rail_glint)
     _make_ribbon(course_root, "RightGuardrailTop", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 1.05, rail_glint)
     _make_guardrail_posts(rail_mat)
+
+
+func _make_asphalt_material(route: Dictionary) -> ShaderMaterial:
+    var shader := Shader.new()
+    shader.code = """
+shader_type spatial;
+render_mode diffuse_burley, specular_schlick_ggx;
+
+uniform vec4 asphalt_color : source_color = vec4(0.10, 0.11, 0.12, 1.0);
+
+float hash_cell(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+void fragment() {
+    vec2 uv = UV;
+    float fine_grain = hash_cell(floor(uv * vec2(150.0, 190.0)));
+    float coarse_grain = hash_cell(floor(uv * vec2(5.0, 12.0)));
+    float speckle = (fine_grain - 0.5) * 0.105;
+    float patch = (coarse_grain - 0.5) * 0.075;
+    ALBEDO = asphalt_color.rgb * (0.91 + speckle + patch);
+    ROUGHNESS = 0.93;
+    METALLIC = 0.015;
+    SPECULAR = 0.20;
+}
+"""
+    var material := ShaderMaterial.new()
+    material.shader = shader
+    material.set_shader_parameter("asphalt_color", route["asphalt"])
+    return material
+
+
+func _make_racing_curbs(route: Dictionary) -> void:
+    var curb_mesh := BoxMesh.new()
+    curb_mesh.size = Vector3(0.60, 0.075, 8.5)
+    var transforms: Array[Transform3D] = []
+    var colors := PackedColorArray()
+    var accent: Color = route["accent"]
+    var ivory := Color(0.94, 0.93, 0.86)
+    var segments := int(route_length / 9.0)
+    for i in range(segments):
+        var d := float(i) * 9.0 + 4.5
+        var basis := Basis.looking_at(_forward_at(d), Vector3.UP)
+        var strip_color := accent if i % 2 == 0 else ivory
+        for side_value in [-1.0, 1.0]:
+            var side: float = side_value
+            var point := _point_at(d) + _right_at(d) * side * (ROAD_HALF - 0.60) + Vector3.UP * 0.045
+            transforms.append(Transform3D(basis, point))
+            colors.append(strip_color)
+    var curb_material := _mat(Color.WHITE, 0.7, 0.0)
+    curb_material.vertex_color_use_as_albedo = true
+    _add_instanced_mesh(course_root, "InstancedRaceKerbs", curb_mesh, curb_material, transforms, colors)
 
 
 func _make_dashed_lane_markings() -> void:
@@ -437,6 +490,7 @@ func _rebuild_route() -> void:
     _build_route_surface()
     _build_route_props()
     _build_race_objects()
+    _build_race_gates()
     _restart_race(false)
     route_label.text = "%02d / %02d   %s" % [route_index + 1, ROUTES.size(), route["name"]]
     message_label.text = "%s  •  READY TO RACE" % route["subtitle"]
@@ -820,6 +874,41 @@ func _create_boost_pad(distance: float, lane: float, seed_id: int) -> void:
     var pad_mat := _emissive_mat(Color(0.06, 0.80, 1.0), 1.4)
     _add_box(root, Vector3(1.65, 0.09, 3.5), Vector3.ZERO, pad_mat, "BoostPad")
     obstacle_nodes.append({"root": root, "distance": distance, "lane": lane, "kind": "boost"})
+
+
+func _build_race_gates() -> void:
+    var start_mat := _emissive_mat(Color(0.10, 0.85, 1.0), 1.2)
+    var finish_mat := _emissive_mat(Color(1.0, 0.63, 0.11), 1.6)
+    _create_race_gate(16.0, "START", start_mat)
+    for i in range(checkpoint_distances.size()):
+        _create_race_gate(checkpoint_distances[i], "CHECKPOINT %02d" % (i + 1), start_mat if i % 2 == 0 else finish_mat)
+    _create_race_gate(route_length - 18.0, "FINISH", finish_mat)
+
+
+func _create_race_gate(distance: float, sign_text: String, accent_material: Material) -> void:
+    var gate := Node3D.new()
+    gate.name = "RaceGate_" + sign_text.replace(" ", "_")
+    gate.position = _point_at(distance)
+    gate.basis = Basis.looking_at(_forward_at(distance), Vector3.UP)
+    course_root.add_child(gate)
+
+    var dark_metal := _mat(Color(0.035, 0.06, 0.09), 0.28, 0.72)
+    _add_box(gate, Vector3(0.34, 5.9, 0.40), Vector3(-9.15, 2.95, 0.0), dark_metal, "LeftUpright")
+    _add_box(gate, Vector3(0.34, 5.9, 0.40), Vector3(9.15, 2.95, 0.0), dark_metal, "RightUpright")
+    _add_box(gate, Vector3(18.8, 0.45, 0.58), Vector3(0.0, 5.85, 0.0), accent_material, "IlluminatedCrossbar")
+    _add_box(gate, Vector3(8.2, 1.08, 0.45), Vector3(0.0, 4.92, 0.36), _mat(Color(0.015, 0.03, 0.05), 0.35, 0.25), "SignPanel")
+
+    var sign := Label3D.new()
+    sign.name = "GateSign"
+    sign.text = sign_text
+    sign.font_size = 82
+    sign.pixel_size = 0.010
+    sign.outline_size = 10
+    sign.outline_modulate = Color(0.005, 0.01, 0.02, 1.0)
+    sign.modulate = Color(1.0, 1.0, 1.0, 1.0)
+    sign.position = Vector3(0.0, 4.68, 0.62)
+    sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    gate.add_child(sign)
 
 
 func _build_player() -> void:
