@@ -1,0 +1,114 @@
+{
+  "source_repository": "https://github.com/supercar3d/supercar_3D_asssets",
+  "license": "CC-BY-4.0",
+  "models": [
+    {
+      "game_name": "Zenith X1",
+      "file": "zenith_x1.glb",
+      "source_path": "basic/lamborghini/huracan/huracan.glb",
+      "source_git_blob_sha": "b4ea1f630ba83f84fad043e21b4043d9fbaf8d0a",
+      "sha256": "7414ca134f854086f91d829f1b96bdf01d16f6d5b06d8ad0382989b862871f68",
+      "size_bytes": 4173984,
+      "original_title": "2019 Lamborghini Hurac\u00e1n EVO",
+      "creator": "Galaxy Car Showroom",
+      "source_url": "https://skfb.ly/pBZKS",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Apex V12R",
+      "file": "apex_v12r.glb",
+      "source_path": "basic/lamborghini/aventador/aventador.glb",
+      "source_git_blob_sha": "0a3ec230fe56998103055508734de8f240f3164b",
+      "sha256": "78bb593ae50bf4b26dcf1e6524a84f62f18d7be86e4243de25e36d2930d59760",
+      "size_bytes": 7423384,
+      "original_title": "Lamborghini Aventador with Interior",
+      "creator": "BlackCube",
+      "source_url": "https://skfb.ly/ovA69",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Titan GT",
+      "file": "titan_gt.glb",
+      "source_path": "basic/mclaren/gt-2020/gt-2020.glb",
+      "source_git_blob_sha": "9b8f6187b876ceb8606b176648d9d555c7f9b67b",
+      "sha256": "d8f58e8c4401966a15b0e152bafb0b82f5e393358877cac8749cc00d64ef8f78",
+      "size_bytes": 1515772,
+      "original_title": "2020 McLaren GT",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/psILo",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Rallyfox X",
+      "file": "rallyfox_x.glb",
+      "source_path": "basic/ferrari/f40/f40.glb",
+      "source_git_blob_sha": "24ee429dd2bf24c82a5847aee38e90b9a6e5eef7",
+      "sha256": "10bfdf3d1bb99ca0c58e0f42d798eaacc204b83538fbb8caa4875b1ad5aa34e0",
+      "size_bytes": 975468,
+      "original_title": "Ferrari f40",
+      "creator": "Black Snow",
+      "source_url": "https://skfb.ly/oRnMV",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Volt E RS",
+      "file": "volt_e_rs.glb",
+      "source_path": "basic/mclaren/artura-2023/artura-2023.glb",
+      "source_git_blob_sha": "5f7359182ab08fa790296d816f0d7a580a9bbab8",
+      "sha256": "26a2b3105635c59b7788337561540cffdfe9eda430580177b89f717d7091dc1c",
+      "size_bytes": 3215216,
+      "original_title": "2023 McLaren Artura",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/pqQZX",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Phantom Blackline",
+      "file": "phantom_blackline.glb",
+      "source_path": "basic/lamborghini/revuelto/revuelto.glb",
+      "source_git_blob_sha": "2ab04fa548283e533ce82c211d2b81d549654190",
+      "sha256": "c0152265e117c79c526f40eb982fafda4c7da141a5c30096fd254d406bbd352d",
+      "size_bytes": 4325940,
+      "original_title": "2024 Lamborghini Revuelto",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/prv6Y",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Tempest Roadster",
+      "file": "tempest_roadster.glb",
+      "source_path": "basic/mclaren/elva-2021/elva-2021.glb",
+      "source_git_blob_sha": "cb7fd6d61c3a4c01f21ff010a8c838f3603ffa0b",
+      "sha256": "744a249a61ffa0c2bd4f8a36213614eade53704f48e5108b9b8c4b4060512765",
+      "size_bytes": 2073188,
+      "original_title": "2021 McLaren Elva",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/prM8F",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Monarch SVR",
+      "file": "monarch_svr.glb",
+      "source_path": "basic/lamborghini/urus-2025/urus-2025.glb",
+      "source_git_blob_sha": "5367ca9c8ee119be9c87400c54afdaec9790707d",
+      "sha256": "4e3e5c23e0a80d74b61162eca6e410b2c7cc8bcac958fb4f3363759d35ea2d40",
+      "size_bytes": 2666264,
+      "original_title": "2025 Lamborghini Urus SE",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/pstrJ",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "game_name": "Viper Street RS",
+      "file": "viper_street_rs.glb",
+      "source_path": "basic/ferrari/sf90/sf90.glb",
+      "source_git_blob_sha": "d1e3de606845f99ada18e1a9837b83f554568695",
+      "sha256": "412e4b787778bd2d4ea3e463a2c4b2c651c86c511674ec48011e610f92d30308",
+      "size_bytes": 2566272,
+      "original_title": "2023 Ferrari SF90 XX Stradale",
+      "creator": "Ddiaz Design",
+      "source_url": "https://skfb.ly/pqNIt",
+      "license": "CC-BY-4.0"
+    }
+  ]
+}
