@@ -7,6 +7,7 @@ on:
       - ".github/workflows/import-car-assets.yml"
       - "mobile-racer/assets-lock.json"
       - "mobile-racer/tools/import_assets.py"
+      - "mobile-racer/tools/decode_draco.mjs"
   workflow_dispatch:
 
 permissions:
@@ -31,8 +32,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Download and verify all nine cars
-        run: python mobile-racer/tools/import_assets.py
+      - name: Install glTF decoder dependencies
+        run: npm install --no-save @gltf-transform/core @gltf-transform/extensions draco3dgltf
+
+      - name: Download, pin-check, and decode all nine cars for Godot
+        run: |
+          python mobile-racer/tools/import_assets.py
+          node mobile-racer/tools/decode_draco.mjs
 
       - name: Commit models and attribution into this repository
         run: |
