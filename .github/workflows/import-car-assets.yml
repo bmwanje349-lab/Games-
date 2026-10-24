@@ -33,7 +33,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install glTF decoder dependencies
-        run: npm install --no-save @gltf-transform/core @gltf-transform/extensions draco3dgltf
+        run: npm install --no-save @gltf-transform/core @gltf-transform/extensions @gltf-transform/functions meshoptimizer sharp draco3dgltf
 
       - name: Download, pin-check, and decode all nine cars for Godot
         run: |
