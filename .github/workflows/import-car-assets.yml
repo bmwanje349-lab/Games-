@@ -1,0 +1,47 @@
+name: Import verified CC-BY car assets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/import-car-assets.yml"
+      - "mobile-racer/assets-lock.json"
+      - "mobile-racer/tools/import_assets.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: car-asset-import-main
+  cancel-in-progress: false
+
+jobs:
+  import-car-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out game repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download and verify all nine cars
+        run: python mobile-racer/tools/import_assets.py
+
+      - name: Commit models and attribution into this repository
+        run: |
+          git add mobile-racer/assets/cars mobile-racer/ASSET_CREDITS.md
+          if git diff --cached --quiet; then
+            echo "Assets are already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Import nine verified CC-BY 4.0 car models"
+          git push origin HEAD:main
