@@ -6,7 +6,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { NodeIO } from '@gltf-transform/core';
-import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
+import * as Extensions from '@gltf-transform/extensions';
 import draco3d from 'draco3dgltf';
 
 const root = path.resolve('mobile-racer');
@@ -14,8 +14,10 @@ const assetsDir = path.join(root, 'assets', 'cars');
 const manifestFile = path.join(assetsDir, 'asset-manifest.json');
 const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
 const decoder = await draco3d.createDecoderModule();
+const extensionClasses = Object.values(Extensions)
+  .filter((value) => typeof value === 'function' && typeof value.EXTENSION_NAME === 'string');
 const io = new NodeIO()
-  .registerExtensions([KHRDracoMeshCompression])
+  .registerExtensions(extensionClasses)
   .registerDependencies({ 'draco3d.decoder': decoder });
 
 for (const model of manifest.models) {
