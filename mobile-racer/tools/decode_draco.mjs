@@ -15,9 +15,9 @@ const manifestFile = path.join(assetsDir, 'asset-manifest.json');
 const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
 const decoder = await draco3d.createDecoderModule();
 const extensionClasses = Object.values(Extensions)
-  .filter((value) => typeof value === 'function' && typeof value.EXTENSION_NAME === 'string' && value.prototype && typeof value.prototype.register === 'function');
+  .filter((value) => typeof value === 'function' && typeof value.EXTENSION_NAME === 'string' && value.prototype && typeof value.register === 'function');
 const io = new NodeIO()
-  .registerExtensions([...extensionClasses, Extensions.KHRDracoMeshCompression])
+  .registerExtensions(extensionClasses)
   .registerDependencies({ 'draco3d.decoder': decoder });
 
 for (const model of manifest.models) {
