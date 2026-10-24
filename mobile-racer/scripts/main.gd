@@ -163,8 +163,24 @@ func _build_track() -> void:
         _add_box(self, Vector3(0.12, 0.02, ROAD_LENGTH), Vector3(x, 0.0, ROAD_START_Z - ROAD_LENGTH * 0.5), edge_mat, "RoadEdgeLine")
     for x in [-7.0, 7.0]:
         _add_box(self, Vector3(0.17, 0.62, ROAD_LENGTH), Vector3(x, 0.34, ROAD_START_Z - ROAD_LENGTH * 0.5), rail_mat, "GuardRail")
-        for i in range(0, int(ROAD_LENGTH / 20.0)):
-            _add_box(self, Vector3(0.22, 0.82, 0.20), Vector3(x, 0.34, ROAD_START_Z - float(i) * 20.0), rail_mat, "RailPost")
+    # Thousands of repeated rail supports are GPU-instanced instead of separate nodes.
+    var post_mesh := BoxMesh.new()
+    post_mesh.size = Vector3(0.22, 0.82, 0.20)
+    var post_mm := MultiMesh.new()
+    post_mm.transform_format = MultiMesh.TRANSFORM_3D
+    post_mm.mesh = post_mesh
+    var posts_per_side := int(ROAD_LENGTH / 20.0)
+    post_mm.instance_count = posts_per_side * 2
+    var post_index := 0
+    for x in [-7.0, 7.0]:
+        for i in range(posts_per_side):
+            post_mm.set_instance_transform(post_index, Transform3D(Basis.IDENTITY, Vector3(x, 0.34, ROAD_START_Z - float(i) * 20.0)))
+            post_index += 1
+    var post_instance := MultiMeshInstance3D.new()
+    post_instance.name = "InstancedRailSupports"
+    post_instance.multimesh = post_mm
+    post_instance.material_override = rail_mat
+    add_child(post_instance)
 
 
 func _build_scenery() -> void:
@@ -229,7 +245,9 @@ func _build_player() -> void:
 
 
 func _collect_bounds(node: Node, transform_to_root: Transform3D, points: Array) -> void:
-    var local_transform := transform_to_root * node.transform if node is Node3D else transform_to_root
+    var local_transform := transform_to_root
+    if node is Node3D:
+        local_transform = transform_to_root * (node as Node3D).transform
     if node is MeshInstance3D and node.mesh != null:
         var box: AABB = node.mesh.get_aabb()
         for bits in range(8):
