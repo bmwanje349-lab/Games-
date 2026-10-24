@@ -83,6 +83,10 @@ var player_root: Node3D
 var car_visual: Node3D
 var chase_camera: Camera3D
 var world_environment: WorldEnvironment
+var key_light: DirectionalLight3D
+var fill_light: DirectionalLight3D
+var best_times: Dictionary = {}
+var best_time_label: Label
 
 var coin_nodes: Array[Dictionary] = []
 var obstacle_nodes: Array[Dictionary] = []
@@ -102,6 +106,7 @@ var boost_button: Button
 
 func _ready() -> void:
     _configure_input()
+    _load_records()
     _build_world()
     _build_player()
     _build_hud()
@@ -164,7 +169,15 @@ func _process(delta: float) -> void:
     if travel_distance >= route_length:
         race_over = true
         current_speed = 0.0
-        message_label.text = "FINISH!  •  %s" % _format_time(elapsed_time)
+        var route_name := String(ROUTES[route_index]["name"])
+        var previous_best := float(best_times.get(route_name, 0.0))
+        var is_record := previous_best <= 0.0 or elapsed_time < previous_best
+        if is_record:
+            best_times[route_name] = elapsed_time
+            _save_records()
+            message_label.text = "NEW PERSONAL BEST!  •  %s" % _format_time(elapsed_time)
+        else:
+            message_label.text = "FINISH!  •  %s" % _format_time(elapsed_time)
     _refresh_hud()
 
 
@@ -194,22 +207,22 @@ func _build_world() -> void:
     add_child(world_environment)
     _configure_route_environment()
 
-    var sun := DirectionalLight3D.new()
-    sun.name = "KeyLight"
-    sun.rotation_degrees = Vector3(-42.0, -24.0, 0.0)
-    sun.light_energy = 1.35
-    sun.light_color = Color(1.0, 0.91, 0.78)
-    sun.shadow_enabled = true
-    sun.directional_shadow_max_distance = 120.0
-    add_child(sun)
+    key_light = DirectionalLight3D.new()
+    key_light.name = "KeyLight"
+    key_light.rotation_degrees = Vector3(-42.0, -24.0, 0.0)
+    key_light.light_energy = 1.35
+    key_light.light_color = Color(1.0, 0.91, 0.78)
+    key_light.shadow_enabled = true
+    key_light.directional_shadow_max_distance = 120.0
+    add_child(key_light)
 
-    var fill := DirectionalLight3D.new()
-    fill.name = "SkyFill"
-    fill.rotation_degrees = Vector3(-22.0, 153.0, 0.0)
-    fill.light_energy = 0.36
-    fill.light_color = Color(0.43, 0.64, 1.0)
-    fill.shadow_enabled = false
-    add_child(fill)
+    fill_light = DirectionalLight3D.new()
+    fill_light.name = "SkyFill"
+    fill_light.rotation_degrees = Vector3(-22.0, 153.0, 0.0)
+    fill_light.light_energy = 0.36
+    fill_light.light_color = Color(0.43, 0.64, 1.0)
+    fill_light.shadow_enabled = false
+    add_child(fill_light)
 
 
 func _configure_route_environment() -> void:
@@ -234,6 +247,12 @@ func _configure_route_environment() -> void:
     env.fog_density = 0.0012 if route["kind"] != "city" else 0.0028
     env.volumetric_fog_enabled = false
     world_environment.environment = env
+    if is_instance_valid(key_light):
+        key_light.light_energy = 0.22 if route["kind"] == "city" else 1.35
+        key_light.light_color = Color(0.48, 0.59, 1.0) if route["kind"] == "city" else Color(1.0, 0.91, 0.78)
+    if is_instance_valid(fill_light):
+        fill_light.light_energy = 0.62 if route["kind"] == "city" else 0.36
+        fill_light.light_color = Color(0.18, 0.40, 1.0) if route["kind"] == "city" else Color(0.43, 0.64, 1.0)
 
 
 func _mat(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
@@ -598,6 +617,25 @@ func _build_nature_props(kind: String) -> void:
     course_root.add_child(canopies)
 
 
+func _add_instanced_mesh(parent: Node3D, node_name: String, mesh: Mesh, material: Material, transforms: Array[Transform3D], colors: PackedColorArray = PackedColorArray()) -> MultiMeshInstance3D:
+    var multi := MultiMesh.new()
+    multi.transform_format = MultiMesh.TRANSFORM_3D
+    multi.mesh = mesh
+    multi.instance_count = transforms.size()
+    multi.use_colors = colors.size() == transforms.size()
+    for i in range(transforms.size()):
+        multi.set_instance_transform(i, transforms[i])
+        if multi.use_colors:
+            multi.set_instance_color(i, colors[i])
+    var instance := MultiMeshInstance3D.new()
+    instance.name = node_name
+    instance.multimesh = multi
+    instance.material_override = material
+    instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    parent.add_child(instance)
+    return instance
+
+
 func _build_city_props() -> void:
     var facade_colors := [
         Color(0.055, 0.065, 0.105),
@@ -605,26 +643,81 @@ func _build_city_props() -> void:
         Color(0.16, 0.17, 0.23),
         Color(0.075, 0.105, 0.14),
     ]
-    var windows := _emissive_mat(Color(0.04, 0.70, 1.0), 1.8)
-    var windows_warm := _emissive_mat(Color(1.0, 0.34, 0.10), 1.35)
-    for side in [-1.0, 1.0]:
-        for i in range(int(route_length / 48.0)):
+    var facade_transforms: Array[Transform3D] = []
+    var facade_instance_colors := PackedColorArray()
+    var cool_window_transforms: Array[Transform3D] = []
+    var warm_window_transforms: Array[Transform3D] = []
+    var lamp_pole_transforms: Array[Transform3D] = []
+    var cyan_lamp_transforms: Array[Transform3D] = []
+    var warm_lamp_transforms: Array[Transform3D] = []
+    var buildings_per_side := int(route_length / 48.0)
+
+    for side_value in [-1.0, 1.0]:
+        var side: float = side_value
+        for i in range(buildings_per_side):
             var d := float(i) * 48.0 + 24.0
-            var offset: float = side * randf_range(24.0, 46.0)
-            var center: Vector3 = _point_at(d) + _right_at(d) * offset
+            var side_offset: float = side * randf_range(24.0, 46.0)
+            var road_point := _point_at(d)
+            var right := _right_at(d)
+            var base := road_point + right * side_offset
             var height := randf_range(11.0, 38.0)
             var width := randf_range(8.0, 16.0)
             var depth := randf_range(13.0, 23.0)
-            var building := Node3D.new()
-            building.name = "CityBuilding"
-            building.position = Vector3(center.x, height * 0.5 - 2.7, center.z)
-            building.rotation.y = atan2(_forward_at(d).x, -_forward_at(d).z)
-            course_root.add_child(building)
-            _add_box(building, Vector3(width, height, depth), Vector3.ZERO, _mat(facade_colors[i % facade_colors.size()], 0.48, 0.18), "Facade")
+            var yaw := atan2(_forward_at(d).x, -_forward_at(d).z)
+            var rotation_basis := Basis(Vector3.UP, yaw)
+            var facade_basis := rotation_basis * Basis.from_scale(Vector3(width, height, depth))
+            var facade_origin := base + Vector3(0.0, height * 0.5 - 2.7, 0.0)
+            facade_transforms.append(Transform3D(facade_basis, facade_origin))
+            facade_instance_colors.append(facade_colors[i % facade_colors.size()])
+
             for floor_idx in range(int(height / 3.4)):
-                var y := -height * 0.5 + 2.0 + float(floor_idx) * 3.2
-                _add_box(building, Vector3(width * 0.69, 0.15, depth + 0.06), Vector3(0.0, y, 0.0), windows if (i + floor_idx) % 3 != 0 else windows_warm, "LitWindowBand")
-    # Overhead illuminated gantries make this route read as a night circuit.
+                var window_y := -height * 0.5 + 2.0 + float(floor_idx) * 3.2
+                var window_origin := facade_origin + Vector3(0.0, window_y, 0.0)
+                var window_basis := rotation_basis * Basis.from_scale(Vector3(width * 0.69, 0.15, depth + 0.06))
+                var window_transform := Transform3D(window_basis, window_origin)
+                if (i + floor_idx) % 3 != 0:
+                    cool_window_transforms.append(window_transform)
+                else:
+                    warm_window_transforms.append(window_transform)
+
+    # GPU instancing turns hundreds of separate facade/window nodes into a few draws.
+    var facade_mesh := BoxMesh.new()
+    facade_mesh.size = Vector3.ONE
+    var facade_material := _mat(Color.WHITE, 0.48, 0.18)
+    facade_material.vertex_color_use_as_albedo = true
+    _add_instanced_mesh(course_root, "InstancedCityFacades", facade_mesh, facade_material, facade_transforms, facade_instance_colors)
+
+    var window_mesh := BoxMesh.new()
+    window_mesh.size = Vector3.ONE
+    _add_instanced_mesh(course_root, "InstancedCyanWindows", window_mesh, _emissive_mat(Color(0.035, 0.58, 1.0), 1.75), cool_window_transforms)
+    _add_instanced_mesh(course_root, "InstancedWarmWindows", window_mesh, _emissive_mat(Color(1.0, 0.28, 0.075), 1.45), warm_window_transforms)
+
+    # Streetlights repeat along the outside of the safety rail. Their luminous
+    # bars establish a night-race silhouette without a dynamic point light per lamp.
+    var pole_mesh := BoxMesh.new()
+    pole_mesh.size = Vector3(0.13, 6.0, 0.13)
+    var lamp_mesh := BoxMesh.new()
+    lamp_mesh.size = Vector3(1.3, 0.16, 0.4)
+    for side_value in [-1.0, 1.0]:
+        var side: float = side_value
+        for i in range(int(route_length / 42.0)):
+            var d := float(i) * 42.0 + 18.0
+            var p := _point_at(d) + _right_at(d) * side * 10.4
+            var basis := Basis.looking_at(_forward_at(d), Vector3.UP)
+            lamp_pole_transforms.append(Transform3D(basis, p + Vector3.UP * 2.9))
+            var lamp_pos := p + Vector3.UP * 5.95
+            var lamp_transform := Transform3D(basis, lamp_pos)
+            if side < 0.0:
+                cyan_lamp_transforms.append(lamp_transform)
+            else:
+                warm_lamp_transforms.append(lamp_transform)
+    _add_instanced_mesh(course_root, "InstancedStreetlightPoles", pole_mesh, _mat(Color(0.15, 0.19, 0.26), 0.35, 0.7), lamp_pole_transforms)
+    _add_instanced_mesh(course_root, "CyanStreetlights", lamp_mesh, _emissive_mat(Color(0.04, 0.68, 1.0), 2.2), cyan_lamp_transforms)
+    _add_instanced_mesh(course_root, "AmberStreetlights", lamp_mesh, _emissive_mat(Color(1.0, 0.28, 0.07), 1.9), warm_lamp_transforms)
+
+    # Five illuminated overhead gates work as visual landmarks between sectors.
+    var cyan := _emissive_mat(Color(0.04, 0.70, 1.0), 1.8)
+    var warm := _emissive_mat(Color(1.0, 0.34, 0.10), 1.35)
     for d in [300.0, 1150.0, 2100.0, 3100.0, 3900.0]:
         if d < route_length:
             var gate := Node3D.new()
@@ -632,9 +725,9 @@ func _build_city_props() -> void:
             gate.position = _point_at(d) + Vector3(0.0, 7.4, 0.0)
             gate.rotation.y = atan2(_forward_at(d).x, -_forward_at(d).z)
             course_root.add_child(gate)
-            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(-ROAD_WIDTH * 0.55, -3.6, 0.0), windows, "LeftPillar")
-            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(ROAD_WIDTH * 0.55, -3.6, 0.0), windows_warm, "RightPillar")
-            _add_box(gate, Vector3(ROAD_WIDTH * 1.15, 0.22, 0.3), Vector3(0.0, 0.0, 0.0), windows, "TopBar")
+            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(-ROAD_WIDTH * 0.55, -3.6, 0.0), cyan, "LeftPillar")
+            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(ROAD_WIDTH * 0.55, -3.6, 0.0), warm, "RightPillar")
+            _add_box(gate, Vector3(ROAD_WIDTH * 1.15, 0.22, 0.3), Vector3(0.0, 0.0, 0.0), cyan, "TopBar")
 
 
 func _build_race_objects() -> void:
@@ -780,7 +873,9 @@ func _load_selected_car() -> void:
         car_visual.queue_free()
         car_visual = null
     var entry: Dictionary = CARS[car_index]
-    var packed := load(entry["file"]) as PackedScene
+    var packed: PackedScene = null
+    if FileAccess.file_exists(String(entry["file"])):
+        packed = load(entry["file"]) as PackedScene
     if packed == null:
         _make_fallback_car()
         car_label.text = "%s  •  model unavailable" % entry["name"]
@@ -883,7 +978,7 @@ func _build_hud() -> void:
     var top_panel := PanelContainer.new()
     top_panel.name = "RaceInfoPanel"
     top_panel.position = Vector2(22.0, 18.0)
-    top_panel.size = Vector2(415.0, 142.0)
+    top_panel.size = Vector2(415.0, 176.0)
     top_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.032, 0.06, 0.84), Color(0.2, 0.65, 0.91, 0.8), 16))
     overlay.add_child(top_panel)
     var info := VBoxContainer.new()
@@ -915,6 +1010,11 @@ func _build_hud() -> void:
     time_label.add_theme_font_size_override("font_size", 18)
     time_label.add_theme_color_override("font_color", Color(0.78, 0.88, 0.97))
     info.add_child(time_label)
+
+    best_time_label = Label.new()
+    best_time_label.add_theme_font_size_override("font_size", 16)
+    best_time_label.add_theme_color_override("font_color", Color(0.42, 0.88, 0.96))
+    info.add_child(best_time_label)
 
     var car_panel := PanelContainer.new()
     car_panel.position = Vector2(850.0, 18.0)
@@ -953,7 +1053,7 @@ func _build_hud() -> void:
     next_route.pressed.connect(func(): _change_route(1))
 
     message_label = Label.new()
-    message_label.position = Vector2(310.0, 172.0)
+    message_label.position = Vector2(310.0, 203.0)
     message_label.size = Vector2(660.0, 48.0)
     message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     message_label.add_theme_font_size_override("font_size", 22)
@@ -1093,6 +1193,26 @@ func _restart_race(show_message := true) -> void:
     _refresh_hud()
 
 
+
+func _load_records() -> void:
+    var config := ConfigFile.new()
+    if config.load("user://turbo_trails_records.cfg") != OK:
+        return
+    for route in ROUTES:
+        var route_name := String(route["name"])
+        best_times[route_name] = float(config.get_value("records", route_name, 0.0))
+
+
+func _save_records() -> void:
+    var config := ConfigFile.new()
+    for route in ROUTES:
+        var route_name := String(route["name"])
+        config.set_value("records", route_name, float(best_times.get(route_name, 0.0)))
+    var err := config.save("user://turbo_trails_records.cfg")
+    if err != OK:
+        push_warning("Could not save personal-best times: " + error_string(err))
+
+
 func _score() -> int:
     return int(travel_distance * 2.0) + coins_collected * COIN_SCORE
 
@@ -1109,6 +1229,8 @@ func _refresh_hud() -> void:
     score_label.text = "SCORE  %07d" % _score()
     speed_label.text = "SPEED  %03d km/h" % int(current_speed * 3.6)
     time_label.text = "TIME  %s    COINS  %03d" % [_format_time(elapsed_time), coins_collected]
+    var saved_best := float(best_times.get(String(ROUTES[route_index]["name"]), 0.0))
+    best_time_label.text = "BEST  %s" % (_format_time(saved_best) if saved_best > 0.0 else "--:--.--")
     progress_bar.value = clampf(travel_distance / maxf(route_length, 1.0) * 100.0, 0.0, 100.0)
     if is_instance_valid(boost_button):
         boost_button.disabled = nitro_bar.value <= 0.0
