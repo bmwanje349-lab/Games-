@@ -207,14 +207,15 @@ func _build_scenery() -> void:
     trunk_multi.instance_count = count
     leaves_multi.instance_count = count
     var idx := 0
-    for side in [-1.0, 1.0]:
+    for side_value in [-1.0, 1.0]:
+        var side: float = side_value
         for i in range(per_side):
             var z := ROAD_START_Z - float(i) * 24.0 - 5.0
-            var x := side * randf_range(9.0, 17.5)
+            var x: float = side * randf_range(9.0, 17.5)
             var scale := randf_range(0.72, 1.28)
             var tree_basis := Basis.from_scale(Vector3(scale, scale, scale))
             trunk_multi.set_instance_transform(idx, Transform3D(tree_basis, Vector3(x, 1.4 * scale, z)))
-            leaves_multi.set_instance_transform(idx, Transform3(tree_basis, Vector3(x, 3.1 * scale, z)))
+            leaves_multi.set_instance_transform(idx, Transform3D(tree_basis, Vector3(x, 3.1 * scale, z)))
             idx += 1
     var trunks := MultiMeshInstance3D.new()
     trunks.name = "InstancedTreeTrunks"
