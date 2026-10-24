@@ -675,8 +675,8 @@ func _add_instanced_mesh(parent: Node3D, node_name: String, mesh: Mesh, material
     var multi := MultiMesh.new()
     multi.transform_format = MultiMesh.TRANSFORM_3D
     multi.mesh = mesh
-    multi.instance_count = transforms.size()
     multi.use_colors = colors.size() == transforms.size()
+    multi.instance_count = transforms.size()
     for i in range(transforms.size()):
         multi.set_instance_transform(i, transforms[i])
         if multi.use_colors:
