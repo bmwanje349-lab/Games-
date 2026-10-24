@@ -65,7 +65,7 @@ def main() -> None:
             f"- Original model: {item['source_url']}\n"
             f"- Licence: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/\n"
             f"- Upstream file: {item['source_path']}\n"
-            f"- SHA-256: {mesh_sha256}\n"
+            f"- Upstream source SHA-256: {mesh_sha256}\n"
         )
         print(f"Verified {item['game_name']}: {len(mesh):,} bytes; Git blob SHA matches the pin")
     (ASSET_DIR / "asset-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
