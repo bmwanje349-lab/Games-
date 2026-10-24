@@ -17,7 +17,7 @@ const decoder = await draco3d.createDecoderModule();
 const extensionClasses = Object.values(Extensions)
   .filter((value) => typeof value === 'function' && typeof value.EXTENSION_NAME === 'string' && value.prototype && typeof value.prototype.register === 'function');
 const io = new NodeIO()
-  .registerExtensions(extensionClasses)
+  .registerExtensions([...extensionClasses, Extensions.KHRDracoMeshCompression])
   .registerDependencies({ 'draco3d.decoder': decoder });
 
 for (const model of manifest.models) {
