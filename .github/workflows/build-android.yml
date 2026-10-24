@@ -1,0 +1,99 @@
+name: Build Turbo Trails Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile-racer/**"
+      - ".github/workflows/build-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-racer-android-main
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out current game source and car assets
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install Java for Android export
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36 and build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Download Godot 4.7.2 editor and official export templates
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/godot-editor.zip "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+          curl -fL --retry 3 -o /tmp/godot-templates.tpz "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
+          mkdir -p /tmp/godot-editor /tmp/godot-templates
+          unzip -q /tmp/godot-editor.zip -d /tmp/godot-editor
+          unzip -q /tmp/godot-templates.tpz -d /tmp/godot-templates
+          GODOT_BIN="$(find /tmp/godot-editor -maxdepth 2 -type f -name 'Godot_v4.7.2-stable_linux.x86_64' | head -n 1)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          mkdir -p "$TEMPLATE_DIR"
+          find /tmp/godot-templates -type f \( -name 'android_debug.apk' -o -name 'android_release.apk' -o -name 'android_source.zip' \) -exec cp {} "$TEMPLATE_DIR/" \;
+          test -s "$TEMPLATE_DIR/android_debug.apk"
+          test -s "$TEMPLATE_DIR/android_release.apk"
+          echo "4.7.2.stable" > "$TEMPLATE_DIR/version.txt"
+          ls -lh "$TEMPLATE_DIR"
+
+      - name: Configure Godot Android SDK and debug signing
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android" "$HOME/.config/godot"
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$HOME/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+          "$GODOT_BIN" --version
+
+      - name: Import 3D models and check the project scene
+        run: |
+          set -euo pipefail
+          "$GODOT_BIN" --headless --editor --path mobile-racer --import
+          "$GODOT_BIN" --headless --path mobile-racer --quit-after 8
+
+      - name: Export debug APK for arm64 Android phones
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-racer/build
+          "$GODOT_BIN" --headless --path mobile-racer --export-debug "Android" mobile-racer/build/Turbo-Trails-Android.apk
+          test -s mobile-racer/build/Turbo-Trails-Android.apk
+          ls -lh mobile-racer/build/Turbo-Trails-Android.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turbo-Trails-Android-debug
+          path: mobile-racer/build/Turbo-Trails-Android.apk
+          if-no-files-found: error
+          retention-days: 14
