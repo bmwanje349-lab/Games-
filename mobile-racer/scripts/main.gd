@@ -369,7 +369,7 @@ func _make_dashed_lane_markings() -> void:
         var forward := _forward_at(d)
         var basis := Basis.looking_at(forward, Vector3.UP)
         for lane_x in [-3.3, 3.3]:
-            var pos := point + _right_at(d) * lane_x + Vector3.UP * 0.035
+            var pos: Vector3 = point + _right_at(d) * float(lane_x) + Vector3.UP * 0.035
             dash_multi.set_instance_transform(idx, Transform3D(basis, pos))
             idx += 1
     var instance := MultiMeshInstance3D.new()
@@ -392,7 +392,7 @@ func _make_guardrail_posts(material: Material) -> void:
     for side in [-1.0, 1.0]:
         for i in range(count_per_side):
             var d := float(i) * 12.0 + 3.0
-            var pos := _point_at(d) + _right_at(d) * side * (ROAD_HALF + 1.56)
+            var pos: Vector3 = _point_at(d) + _right_at(d) * side * (ROAD_HALF + 1.56)
             pos.y += 0.45
             multi.set_instance_transform(idx, Transform3D(Basis.looking_at(_forward_at(d), Vector3.UP), pos))
             idx += 1
@@ -501,7 +501,7 @@ func _add_alpine_ridge() -> void:
     for side in [-1.0, 1.0]:
         for i in range(int(route_length / 26.0)):
             var d := float(i) * 26.0 + 8.0
-            var base := _point_at(d) + _right_at(d) * side * randf_range(21.0, 42.0)
+            var base: Vector3 = _point_at(d) + _right_at(d) * side * randf_range(21.0, 42.0)
             var height := randf_range(13.0, 43.0)
             var width := randf_range(10.0, 25.0)
             rock_multi.set_instance_transform(index, Transform3D(Basis.from_scale(Vector3(width, height, width * 1.2)), base + Vector3(0.0, height * 0.34, 0.0)))
@@ -526,7 +526,7 @@ func _add_alpine_ridge() -> void:
     for side in [-1.0, 1.0]:
         for i in range(int(route_length / 55.0)):
             var d := float(i) * 55.0 + 12.0
-            var base := _point_at(d) + _right_at(d) * side * randf_range(44.0, 68.0)
+            var base: Vector3 = _point_at(d) + _right_at(d) * side * randf_range(44.0, 68.0)
             var scale := randf_range(4.5, 11.0)
             snow_multi.set_instance_transform(index, Transform3D(Basis.from_scale(Vector3(scale * 1.35, scale, scale)), base + Vector3(0.0, scale * 0.7, 0.0)))
             index += 1
@@ -578,7 +578,7 @@ func _build_nature_props(kind: String) -> void:
         for i in range(count):
             var d := float(i) * 13.0 + 4.0
             var offset := randf_range(13.0, 33.0) if kind == "coast" else randf_range(12.0, 26.0)
-            var tree_pos := _point_at(d) + _right_at(d) * side * offset
+            var tree_pos: Vector3 = _point_at(d) + _right_at(d) * side * offset
             var scale := randf_range(0.68, 1.42)
             var trunk_scale := Basis.from_scale(Vector3(scale, scale, scale))
             trunk_multi.set_instance_transform(idx, Transform3D(trunk_scale, tree_pos + Vector3(0.0, 1.5 * scale - 2.7, 0.0)))
@@ -610,8 +610,8 @@ func _build_city_props() -> void:
     for side in [-1.0, 1.0]:
         for i in range(int(route_length / 48.0)):
             var d := float(i) * 48.0 + 24.0
-            var offset := side * randf_range(24.0, 46.0)
-            var center := _point_at(d) + _right_at(d) * offset
+            var offset: float = side * randf_range(24.0, 46.0)
+            var center: Vector3 = _point_at(d) + _right_at(d) * offset
             var height := randf_range(11.0, 38.0)
             var width := randf_range(8.0, 16.0)
             var depth := randf_range(13.0, 23.0)
