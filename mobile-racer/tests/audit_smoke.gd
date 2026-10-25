@@ -34,6 +34,16 @@ func _run_audit() -> void:
     _expect(course != null and course.has_node("MainRoadSurface"), "initial course has road surface")
     _expect(game.get("coin_nodes").size() > 20, "coin pickups generated")
     _expect(game.get("obstacle_nodes").size() > 10, "traffic and obstacles generated")
+    game.call("_on_left_button_down")
+    _expect(is_equal_approx(float(game.get("steering_touch")), -1.0), "left touch steers left")
+    game.call("_on_right_button_down")
+    _expect(is_equal_approx(float(game.get("steering_touch")), 0.0), "opposing touches cancel")
+    game.call("_on_left_button_up")
+    _expect(is_equal_approx(float(game.get("steering_touch")), 1.0), "releasing one touch keeps other steering held")
+    game.set("brake_touch", true)
+    game.set("boost_touch", true)
+    game.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+    _expect(is_equal_approx(float(game.get("steering_touch")), 0.0) and not bool(game.get("brake_touch")) and not bool(game.get("boost_touch")), "focus loss releases held controls")
     # ResourceLoader must resolve imported GLB paths; exported APKs contain
     # generated scenes rather than the original source GLB files.
     for car_path in [
