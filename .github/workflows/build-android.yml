@@ -90,9 +90,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-racer/build
-          "$GODOT_BIN" --headless --path mobile-racer --export-debug "Android" "$GITHUB_WORKSPACE/mobile-racer/build/Turbo-Trails-Android.apk"
-          test -s mobile-racer/build/Turbo-Trails-Android.apk
-          ls -lh mobile-racer/build/Turbo-Trails-Android.apk
+          APK_PATH="$GITHUB_WORKSPACE/mobile-racer/build/Turbo-Trails-Android.apk"
+          "$GODOT_BIN" --headless --path mobile-racer --export-debug "Android" "$APK_PATH"
+          test -s "$APK_PATH"
+          ls -lh "$APK_PATH"
+
+          # Imported source GLBs are commonly represented by remapped .scn files
+          # in exported PCK data. Verify all nine car scenes and the compiled game
+          # script are actually packaged before publishing the APK.
+          APK_LIST="$RUNNER_TEMP/apk-contents.txt"
+          unzip -l "$APK_PATH" > "$APK_LIST"
+          for model in zenith_x1 apex_v12r titan_gt rallyfox_x volt_e_rs phantom_blackline tempest_roadster monarch_svr viper_street_rs; do
+            if ! grep -Fq "assets/.godot/imported/${model}.glb-" "$APK_LIST"; then
+              echo "APK is missing imported model resource: $model"
+              exit 1
+            fi
+          done
+          grep -Fq "assets/scripts/main.gdc" "$APK_LIST"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
