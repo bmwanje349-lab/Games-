@@ -36,3 +36,10 @@ Open this directory in Godot 4.7.2 or newer, allow imported assets to finish pro
 Generated meshes and MultiMesh instancing avoid a separate scene node for every tree or road segment. Nearby traffic uses a small selection of the car models, while distant traffic is hidden. Texture maps are 1K to balance material detail with mobile memory requirements.
 
 This is a realistic-leaning mobile 3D driving foundation, not a claim of photorealism or finished commercial racing-game polish. Visual quality and frame rate still need testing on physical target phones.
+
+
+### Road-surface quality pass (October 2026)
+
+The driving surface now uses Poly Haven's CC0 **Asphalt Track** PBR set (diffuse, OpenGL normal, and roughness maps). The main asphalt ribbon continues into paved edge shoulders, with separate gravel shoulders beyond them. The road mesh is sampled every 2 m for smoother bends, and the terrain follows the course every 4 m. The roadbed sits about 4 cm above its supporting terrain rather than floating 42 cm above it. Painted edge lines and double yellow centre lines sit close to the pavement, while upright instanced 3D crash-barrier beams and posts replace the previous flat horizontal rail strips.
+
+These changes are quality improvements, not a claim of full Asphalt 9 parity. Final visual quality and frame rate still need checking on a physical Android phone.
