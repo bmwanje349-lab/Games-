@@ -172,10 +172,12 @@ func _process(delta: float) -> void:
         _refresh_hud()
         return
 
+    var crossed_checkpoint := false
     while next_checkpoint < checkpoint_distances.size() and travel_distance >= checkpoint_distances[next_checkpoint]:
         next_checkpoint += 1
+        crossed_checkpoint = true
         message_label.text = "CHECKPOINT %d / %d" % [next_checkpoint, checkpoint_distances.size()]
-    elif message_label.text.begins_with("CHECKPOINT") and next_checkpoint > 0:
+    if not crossed_checkpoint and message_label.text.begins_with("CHECKPOINT") and next_checkpoint > 0:
         message_label.text = "KEEP PUSHING  •  USE NITRO ON THE STRAIGHTS"
 
     if travel_distance >= route_length:
