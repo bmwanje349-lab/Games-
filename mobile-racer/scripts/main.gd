@@ -55,7 +55,7 @@ const ROUTES: Array[Dictionary] = [
 
 const ROAD_WIDTH := 10.5
 const ROAD_HALF := ROAD_WIDTH * 0.5
-const SAMPLE_STEP := 4.0
+const SAMPLE_STEP := 2.0
 const CRUISE_SPEED := 47.0
 const BOOST_SPEED := 67.0
 const BRAKE_SPEED := 18.0
@@ -453,51 +453,74 @@ func _make_asphalt_material(route: Dictionary) -> Material:
     var tint := Color(0.91, 0.92, 0.94)
     if route["kind"] == "city":
         tint = Color(0.72, 0.78, 0.92)
-    return _make_pbr_material("asphalt_03", tint)
+    return _make_pbr_material("asphalt_track", tint)
 
 
 func _build_route_surface() -> void:
     var route: Dictionary = ROUTES[route_index]
-    var asphalt: Material = _make_asphalt_material(route)
-    var shoulder := _make_pbr_material("gravel_road", Color(0.78, 0.76, 0.70))
-    var edge_paint := _mat(Color(0.92, 0.92, 0.86), 0.8)
-    var yellow_paint := _mat(Color(0.96, 0.72, 0.12), 0.8)
-    _make_ribbon(course_root, "TexturedGravelShoulder", -ROAD_HALF - 2.8, ROAD_HALF + 2.8, -0.14, shoulder)
-    _make_ribbon(course_root, "PBRAsphaltRoad", -ROAD_HALF, ROAD_HALF, 0.0, asphalt)
-    _make_ribbon(course_root, "LeftRoadEdgeLine", -ROAD_HALF + 0.12, -ROAD_HALF + 0.30, 0.024, edge_paint)
-    _make_ribbon(course_root, "RightRoadEdgeLine", ROAD_HALF - 0.30, ROAD_HALF - 0.12, 0.024, edge_paint)
-    _make_ribbon(course_root, "CentreYellowLineLeft", -0.23, -0.11, 0.028, yellow_paint)
-    _make_ribbon(course_root, "CentreYellowLineRight", 0.11, 0.23, 0.028, yellow_paint)
-    var rail_mat := _mat(Color(0.52, 0.57, 0.61), 0.42, 0.55)
-    var rail_glint := _mat(Color(0.78, 0.81, 0.82), 0.38, 0.48)
-    _make_ribbon(course_root, "LeftGuardrailLower", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 0.53, rail_mat)
-    _make_ribbon(course_root, "RightGuardrailLower", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 0.53, rail_mat)
-    _make_ribbon(course_root, "LeftGuardrailTop", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 1.02, rail_glint)
-    _make_ribbon(course_root, "RightGuardrailTop", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 1.02, rail_glint)
-    _make_guardrail_posts(rail_mat)
+    var asphalt: StandardMaterial3D = _make_asphalt_material(route) as StandardMaterial3D
+    var gravel := _make_pbr_material("gravel_road", Color(0.68, 0.66, 0.60))
+    # The asphalt ribbon includes a narrow paved shoulder so the material continues
+    # seamlessly across the edge line instead of exposing a raised gravel lip.
+    _make_ribbon(course_root, "LeftGravelShoulder", -ROAD_HALF - 2.8, -ROAD_HALF - 0.70, -0.015, gravel)
+    _make_ribbon(course_root, "RightGravelShoulder", ROAD_HALF + 0.70, ROAD_HALF + 2.8, -0.015, gravel)
+    _make_ribbon(course_root, "PBRAsphaltRoad", -ROAD_HALF - 0.70, ROAD_HALF + 0.70, 0.0, asphalt)
 
-func _make_guardrail_posts(material: Material) -> void:
-    var mesh := BoxMesh.new()
-    mesh.size = Vector3(0.17, 0.9, 0.24)
-    var count_per_side := int(route_length / 12.0)
-    var multi := MultiMesh.new()
-    multi.transform_format = MultiMesh.TRANSFORM_3D
-    multi.mesh = mesh
-    multi.instance_count = count_per_side * 2
-    var idx := 0
-    for side in [-1.0, 1.0]:
-        for i in range(count_per_side):
-            var d := float(i) * 12.0 + 3.0
-            var pos: Vector3 = _point_at(d) + _right_at(d) * side * (ROAD_HALF + 1.56)
-            pos.y += 0.45
-            multi.set_instance_transform(idx, Transform3D(Basis.looking_at(_forward_at(d), Vector3.UP), pos))
-            idx += 1
-    var post_instance := MultiMeshInstance3D.new()
-    post_instance.name = "InstancedGuardrailSupports"
-    post_instance.multimesh = multi
-    post_instance.material_override = material
-    post_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(post_instance)
+    var edge_paint := _mat(Color(0.92, 0.94, 0.92), 0.72)
+    var yellow_paint := _mat(Color(1.0, 0.76, 0.13), 0.72)
+    # Real road-edge lines and the double yellow centre line sit only 1.2 cm
+    # above the pavement, so they read as painted markings rather than raised bars.
+    _make_ribbon(course_root, "LeftRoadEdgeLine", -ROAD_HALF + 0.12, -ROAD_HALF + 0.30, 0.012, edge_paint)
+    _make_ribbon(course_root, "RightRoadEdgeLine", ROAD_HALF - 0.30, ROAD_HALF - 0.12, 0.012, edge_paint)
+    _make_ribbon(course_root, "CentreYellowLineLeft", -0.20, -0.08, 0.014, yellow_paint)
+    _make_ribbon(course_root, "CentreYellowLineRight", 0.08, 0.20, 0.014, yellow_paint)
+    _build_guardrails()
+
+
+func _build_guardrails() -> void:
+    # Guardrail beams are real 3D box sections oriented to the road tangent.
+    # Unlike the old horizontal ribbons, these have visible vertical faces and posts.
+    var upper_mesh := BoxMesh.new()
+    upper_mesh.size = Vector3(0.16, 0.20, 6.35)
+    var lower_mesh := BoxMesh.new()
+    lower_mesh.size = Vector3(0.13, 0.12, 6.35)
+    var post_mesh := BoxMesh.new()
+    post_mesh.size = Vector3(0.14, 0.96, 0.20)
+
+    var upper_transforms: Array[Transform3D] = []
+    var lower_transforms: Array[Transform3D] = []
+    var post_transforms: Array[Transform3D] = []
+    var rail_spacing := 6.0
+    var rail_count := int(ceil(route_length / rail_spacing))
+    var post_spacing := 3.0
+    var post_count := int(ceil(route_length / post_spacing))
+    var rail_tint := _mat(Color(0.66, 0.70, 0.72), 0.34, 0.68)
+    var lower_tint := _mat(Color(0.43, 0.48, 0.51), 0.42, 0.60)
+    var post_tint := _mat(Color(0.45, 0.49, 0.51), 0.52, 0.48)
+    for side_value in [-1.0, 1.0]:
+        var side: float = side_value
+        for i in range(rail_count):
+            var d := minf(float(i) * rail_spacing + rail_spacing * 0.5, route_length)
+            var forward := _forward_at(d)
+            var orientation := Basis.looking_at(forward, Vector3.UP)
+            var base := _point_at(d) + _right_at(d) * side * (ROAD_HALF + 1.55)
+            base.y -= 0.04
+            upper_transforms.append(Transform3D(orientation, base + Vector3.UP * 0.80))
+            lower_transforms.append(Transform3D(orientation, base + Vector3.UP * 0.42))
+        for i in range(post_count):
+            var d := minf(float(i) * post_spacing + post_spacing * 0.5, route_length)
+            var forward := _forward_at(d)
+            var orientation := Basis.looking_at(forward, Vector3.UP)
+            var base := _point_at(d) + _right_at(d) * side * (ROAD_HALF + 1.55)
+            base.y -= 0.04
+            post_transforms.append(Transform3D(orientation, base + Vector3.UP * 0.48))
+
+    var upper := _add_instanced_mesh(course_root, "UpperCrashBarrierRails", upper_mesh, rail_tint, upper_transforms)
+    var lower := _add_instanced_mesh(course_root, "LowerCrashBarrierRails", lower_mesh, lower_tint, lower_transforms)
+    var posts := _add_instanced_mesh(course_root, "CrashBarrierPosts", post_mesh, post_tint, post_transforms)
+    upper.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    lower.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    posts.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 func _rebuild_route() -> void:
@@ -523,7 +546,9 @@ func _rebuild_route() -> void:
 func _terrain_height_offset(distance: float, lateral: float, kind: String) -> float:
     var side := absf(lateral)
     if side <= ROAD_HALF + 2.8:
-        return -0.42
+        # Roadbed and shoulders sit almost flush with the surrounding ground.
+        # The previous -0.42 m offset made the entire road visibly float.
+        return -0.04
     var blend := clampf((side - ROAD_HALF - 2.8) / 22.0, 0.0, 1.0)
     blend = blend * blend * (3.0 - 2.0 * blend)
     var wave := sin(distance * 0.0041 + lateral * 0.023) * 2.3 + sin(distance * 0.014 + lateral * 0.061) * 0.75
@@ -538,7 +563,7 @@ func _terrain_height_offset(distance: float, lateral: float, kind: String) -> fl
             target_height = lerpf(target_height + 5.0, -5.5, cliff_blend)
     elif kind == "city":
         target_height = 0.3 + wave * 0.12
-    return lerpf(-0.42, target_height, blend)
+    return lerpf(-0.04, target_height, blend)
 
 
 func _build_landscape() -> void:
