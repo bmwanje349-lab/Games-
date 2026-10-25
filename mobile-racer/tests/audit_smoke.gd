@@ -56,6 +56,23 @@ func _run_audit() -> void:
     game.set("boost_touch", true)
     game.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
     _expect(is_equal_approx(float(game.get("steering_touch")), 0.0) and not bool(game.get("brake_touch")) and not bool(game.get("boost_touch")), "focus loss releases held controls")
+
+    # Empty nitro must not charge while the boost control remains requested.
+    game.set("start_countdown", 0.0)
+    game.set("travel_distance", 0.0)
+    game.set("lateral_offset", 0.0)
+    game.set("current_speed", 47.0)
+    game.set("nitro_bar.value", 0.0)
+    game.set("boost_touch", true)
+    game.call("_process", 0.05)
+    var nitro_bar := game.get("nitro_bar") as ProgressBar
+    _expect(nitro_bar != null and is_zero_approx(nitro_bar.value), "held empty nitro does not auto-recharge")
+    game.call("_restart_race", false)
+    game.call("_on_left_button_down")
+    game.set("brake_touch", true)
+    game.set("boost_touch", true)
+    game.call("_restart_race", false)
+    _expect(not bool(game.get("steering_left_held")) and not bool(game.get("steering_right_held")) and is_zero_approx(float(game.get("steering_touch"))) and not bool(game.get("brake_touch")) and not bool(game.get("boost_touch")), "restart releases all held controls")
     # ResourceLoader must resolve imported GLB paths; exported APKs contain
     # generated scenes rather than the original source GLB files.
     for car_path in [
@@ -171,6 +188,11 @@ func _run_audit() -> void:
     if not target_obstacle.is_empty():
         var obstacle_distance := float(target_obstacle["distance"])
         var obstacle_lane := float(target_obstacle["lane"])
+        game.set("travel_distance", obstacle_distance - 10.0)
+        game.set("lateral_offset", obstacle_lane)
+        game.call("_check_pickups_and_collisions", obstacle_distance - 20.0, obstacle_lane)
+        _expect(not bool(game.get("race_over")), "unreached obstacle does not cause a crash")
+
         game.set("travel_distance", obstacle_distance)
         game.set("lateral_offset", obstacle_lane)
         game.call("_check_pickups_and_collisions", obstacle_distance - 1.0, obstacle_lane)
