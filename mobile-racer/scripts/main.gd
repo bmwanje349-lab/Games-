@@ -84,7 +84,6 @@ var steering_touch := 0.0
 var steering_left_held := false
 var steering_right_held := false
 var brake_touch := false
-var boost_touch := false
 var steering_mouse := false
 
 var course_root: Node3D
@@ -514,11 +513,10 @@ func _rebuild_route() -> void:
     _build_landscape()
     _build_route_surface()
     _build_route_props()
-    _build_race_objects()
-    _build_race_gates()
+    _build_traffic()
     _restart_race(false)
     route_label.text = "%02d / %02d   %s" % [route_index + 1, ROUTES.size(), route["name"]]
-    message_label.text = "%s  •  READY TO RACE" % route["subtitle"]
+    message_label.text = "%s  •  READY TO DRIVE" % route["subtitle"]
     _refresh_hud()
 
 
