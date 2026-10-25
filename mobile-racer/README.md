@@ -10,7 +10,7 @@ Vehicle manufacturer trademarks and logos remain the property of their respectiv
 
 ## Run locally
 
-Open this directory in Godot 4.4 or newer, let the editor import the GLB assets, and run scenes/main.tscn. Before the asset-import workflow finishes, the scene uses a fallback sports-car model.
+Open this directory in Godot 4.7.2 or newer, let the editor import the GLB assets, and run scenes/main.tscn. The Android export uses the OpenGL Compatibility renderer for broader device-driver support. Before the asset-import workflow finishes, the scene uses a fallback sports-car model.
 
 ## Controls
 
@@ -20,4 +20,4 @@ Open this directory in Godot 4.4 or newer, let the editor import the GLB assets,
 
 ## Mobile performance
 
-Only the selected player car is instantiated at one time. Road markings and roadside vegetation use MultiMesh instancing. The project uses Godot's mobile renderer. Car GLBs remain separate so they can be inspected and individually optimized or given LODs after visual and triangle-count validation.
+Only the selected player car is instantiated at one time. Road markings and roadside vegetation use MultiMesh instancing. The Android project uses Godot's OpenGL Compatibility renderer. Car GLBs remain separate so they can be inspected and individually optimized or given LODs after visual and triangle-count validation.
