@@ -1,6 +1,6 @@
 extends Node3D
-## Turbo Trails: multi-course arcade racer. Course geometry is generated once per route
-## and repeated scenery is instanced to keep draw-call pressure reasonable on phones.
+## Turbo Trails: a mobile-focused 3D driving simulator with textured roads, terrain, and traffic.
+## Curves, vegetation, and repeated props are instanced for mobile rendering.
 
 const CARS: Array[Dictionary] = [
     {"name": "Zenith X1", "file": "res://assets/cars/zenith_x1.glb"},
@@ -53,26 +53,33 @@ const ROUTES: Array[Dictionary] = [
     },
 ]
 
-const ROAD_WIDTH := 14.0
+const ROAD_WIDTH := 10.5
 const ROAD_HALF := ROAD_WIDTH * 0.5
 const SAMPLE_STEP := 4.0
 const CRUISE_SPEED := 47.0
 const BOOST_SPEED := 67.0
 const BRAKE_SPEED := 18.0
-const LANE_LIMIT := 5.0
+const LANE_LIMIT := 10.0
 const COIN_SCORE := 250
 const ROAD_DASH_LENGTH := 7.0
+const WHEELBASE := 2.65
+const TOP_SPEED_MPS := 52.0
+const ROAD_EDGE_MARGIN := 0.85
 
 var route_index := 0
 var car_index := 0
 var route_length := 4800.0
 var travel_distance := 0.0
 var lateral_offset := 0.0
-var current_speed := CRUISE_SPEED
+var current_speed := 0.0
 var elapsed_time := 0.0
-var coins_collected := 0
 var race_over := false
-var start_countdown := 3.0
+var start_countdown := 0.0
+var vehicle_heading := 0.0
+var engine_rpm := 900.0
+var current_gear := 1
+var throttle_touch := false
+var drive_started := false
 var steering_touch := 0.0
 var steering_left_held := false
 var steering_right_held := false
@@ -90,8 +97,7 @@ var fill_light: DirectionalLight3D
 var best_times: Dictionary = {}
 var best_time_label: Label
 
-var coin_nodes: Array[Dictionary] = []
-var obstacle_nodes: Array[Dictionary] = []
+var traffic_nodes: Array[Dictionary] = []
 var checkpoint_distances: Array[float] = []
 var next_checkpoint := 0
 
@@ -102,8 +108,7 @@ var route_label: Label
 var time_label: Label
 var message_label: Label
 var progress_bar: ProgressBar
-var nitro_bar: ProgressBar
-var boost_button: Button
+var throttle_button: Button
 
 
 func _ready() -> void:
@@ -118,86 +123,73 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-    # A stalled or resumed frame must not jump the car past pickups, gates, or
-    # collisions. Cap simulation time and use swept-distance checks below.
     delta = clampf(delta, 0.0, 0.05)
     if race_over:
         _refresh_hud()
         return
-
-    if start_countdown > 0.0:
-        start_countdown = maxf(0.0, start_countdown - delta)
-        current_speed = 0.0
-        if start_countdown > 0.0:
-            message_label.text = "GET READY  •  %d" % int(ceil(start_countdown))
-        else:
-            message_label.text = "GO!  •  FIND THE RACING LINE"
-        _place_player_and_camera(delta)
-        _refresh_hud()
+    if delta <= 0.0:
         return
-
-    elapsed_time += delta
-    var previous_lateral_offset := lateral_offset
+    var previous_distance := travel_distance
+    var previous_lane := lateral_offset
     var steer := steering_touch
     if Input.is_action_pressed("ui_left") or Input.is_key_pressed(KEY_A):
         steer -= 1.0
     if Input.is_action_pressed("ui_right") or Input.is_key_pressed(KEY_D):
         steer += 1.0
     steer = clampf(steer, -1.0, 1.0)
-
     var braking := brake_touch or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
-    var boost_requested := (boost_touch or Input.is_key_pressed(KEY_SPACE)) and not braking
-    var boosting := boost_requested and nitro_bar.value > 0.0
-    var target_speed := CRUISE_SPEED
+    var accelerating := throttle_touch or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
     if braking:
-        target_speed = BRAKE_SPEED
-    elif boosting:
-        target_speed = BOOST_SPEED
-        nitro_bar.value = maxf(0.0, nitro_bar.value - 28.0 * delta)
-        if nitro_bar.value <= 0.0:
-            # Do not leave a held touch registered when the button disables.
-            boost_touch = false
-    elif not boost_requested:
-        nitro_bar.value = minf(100.0, nitro_bar.value + 8.5 * delta)
+        current_speed = move_toward(current_speed, 0.0, 10.5 * delta)
+    elif accelerating:
+        current_speed = move_toward(current_speed, TOP_SPEED_MPS, 3.6 * delta)
+        drive_started = drive_started or current_speed > 0.5
+    else:
+        current_speed = maxf(0.0, current_speed - (0.18 + current_speed * 0.022) * delta)
+    if drive_started:
+        elapsed_time += delta
 
-    current_speed = move_toward(current_speed, target_speed, (48.0 if boosting else 37.0) * delta)
-    var steering_response := lerpf(5.6, 3.9, current_speed / BOOST_SPEED)
-    lateral_offset = clampf(lateral_offset + steer * steering_response * delta * 6.0, -LANE_LIMIT, LANE_LIMIT)
-    if absf(steer) > 0.01:
-        steering_mouse = false
+    # Speed-sensitive bicycle-model steering; yaw is integrated instead of snapping
+    # the car back onto the track centreline every frame.
+    var steering_scale := clampf(3.0 / maxf(current_speed, 3.0), 0.035, 1.0)
+    var wheel_angle := steer * deg_to_rad(29.0) * steering_scale
+    if current_speed > 0.15:
+        vehicle_heading = wrapf(vehicle_heading + (current_speed / WHEELBASE) * tan(wheel_angle) * delta, -PI, PI)
+    var tangent := _forward_at(travel_distance)
+    var road_heading := atan2(tangent.x, -tangent.z)
+    var heading_error := wrapf(road_heading - vehicle_heading, -PI, PI)
+    vehicle_heading = wrapf(vehicle_heading + heading_error * clampf(current_speed / 32.0, 0.0, 1.0) * 0.14 * delta, -PI, PI)
+    var relative_heading := wrapf(vehicle_heading - road_heading, -PI, PI)
+    travel_distance = clampf(travel_distance + current_speed * cos(relative_heading) * delta, 0.0, route_length)
+    lateral_offset = clampf(lateral_offset + current_speed * sin(relative_heading) * delta, -LANE_LIMIT, LANE_LIMIT)
 
-    var previous_distance := travel_distance
-    travel_distance = minf(route_length, travel_distance + current_speed * delta)
+    var offroad := absf(lateral_offset) > ROAD_HALF - ROAD_EDGE_MARGIN
+    if offroad:
+        current_speed = move_toward(current_speed, minf(current_speed, 17.0), 2.8 * delta)
+        if not message_label.text.begins_with("OFF ROAD"):
+            message_label.text = "OFF ROAD  •  EASE OFF AND REJOIN"
+    elif message_label.text.begins_with("OFF ROAD"):
+        message_label.text = "DRIVE CAREFULLY  •  TRAFFIC AHEAD"
+
+    _advance_traffic(delta)
     _place_player_and_camera(delta)
-    _check_pickups_and_collisions(previous_distance, previous_lateral_offset)
-    # A crash must end the frame before checkpoints or finish logic can overwrite
-    # the crash message or award a finish on the same frame.
+    _check_traffic_collisions(previous_distance, previous_lane)
     if race_over:
         _refresh_hud()
         return
-
-    var crossed_checkpoint := false
-    while next_checkpoint < checkpoint_distances.size() and travel_distance >= checkpoint_distances[next_checkpoint]:
-        next_checkpoint += 1
-        crossed_checkpoint = true
-        message_label.text = "CHECKPOINT %d / %d" % [next_checkpoint, checkpoint_distances.size()]
-    if not crossed_checkpoint and message_label.text.begins_with("CHECKPOINT") and next_checkpoint > 0:
-        message_label.text = "KEEP PUSHING  •  USE NITRO ON THE STRAIGHTS"
-
-    if travel_distance >= route_length:
+    if travel_distance >= route_length - 0.01:
         race_over = true
         current_speed = 0.0
+        drive_started = false
         var route_name := String(ROUTES[route_index]["name"])
         var previous_best := float(best_times.get(route_name, 0.0))
-        var is_record := previous_best <= 0.0 or elapsed_time < previous_best
-        if is_record:
+        if previous_best <= 0.0 or elapsed_time < previous_best:
             best_times[route_name] = elapsed_time
             _save_records()
-            message_label.text = "NEW PERSONAL BEST!  •  %s" % _format_time(elapsed_time)
+            message_label.text = "STAGE COMPLETE  •  NEW BEST %s" % _format_time(elapsed_time)
         else:
-            message_label.text = "FINISH!  •  %s" % _format_time(elapsed_time)
+            message_label.text = "STAGE COMPLETE  •  %s" % _format_time(elapsed_time)
     _refresh_hud()
-
 
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
@@ -231,7 +223,7 @@ func _release_touch_controls() -> void:
     steering_right_held = false
     steering_touch = 0.0
     brake_touch = false
-    boost_touch = false
+    throttle_touch = false
 
 
 func _update_touch_steering() -> void:
@@ -390,14 +382,15 @@ func _make_ribbon(parent: Node3D, node_name: String, left_offset: float, right_o
         var right := _right_at(distance)
         vertices.append(center + right * left_offset + Vector3.UP * y_offset)
         vertices.append(center + right * right_offset + Vector3.UP * y_offset)
-        uvs.append(Vector2(0.0, distance / 8.0))
-        uvs.append(Vector2(1.0, distance / 8.0))
+        uvs.append(Vector2(0.0, distance / 2.0))
+        uvs.append(Vector2(absf(right_offset - left_offset) / 2.0, distance / 2.0))
         if i < steps:
             var idx := i * 2
             indices.append_array(PackedInt32Array([idx, idx + 1, idx + 2, idx + 1, idx + 3, idx + 2]))
     arrays[Mesh.ARRAY_VERTEX] = vertices
     arrays[Mesh.ARRAY_TEX_UV] = uvs
     arrays[Mesh.ARRAY_INDEX] = indices
+    arrays[Mesh.ARRAY_NORMAL] = _calculate_normals(vertices, indices)
     var mesh := ArrayMesh.new()
     mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
     mesh.surface_set_material(0, material)
@@ -410,110 +403,79 @@ func _make_ribbon(parent: Node3D, node_name: String, left_offset: float, right_o
     return instance
 
 
-func _build_route_surface() -> void:
-    var route: Dictionary = ROUTES[route_index]
-    var asphalt: Material = _make_asphalt_material(route)
-    var shoulder: Material = _mat(route["shoulder"], 0.94)
-    var edge_paint := _mat(Color(0.94, 0.91, 0.78), 0.78)
-    var yellow_paint := _mat(Color(1.0, 0.70, 0.08), 0.74)
-
-    _make_ribbon(course_root, "WideSafetyShoulder", -ROAD_HALF - 2.5, ROAD_HALF + 2.5, -0.13, shoulder)
-    _make_ribbon(course_root, "MainRoadSurface", -ROAD_HALF, ROAD_HALF, 0.0, asphalt)
-    _make_ribbon(course_root, "LeftWhiteEdge", -ROAD_HALF + 0.18, -ROAD_HALF + 0.43, 0.018, edge_paint)
-    _make_ribbon(course_root, "RightWhiteEdge", ROAD_HALF - 0.43, ROAD_HALF - 0.18, 0.018, edge_paint)
-    _make_ribbon(course_root, "CenterDashLeft", -0.20, -0.07, 0.022, yellow_paint, ROAD_DASH_LENGTH * 2.0)
-    _make_ribbon(course_root, "CenterDashRight", 0.07, 0.20, 0.022, yellow_paint, ROAD_DASH_LENGTH * 2.0)
-
-    # Intermittent white lane marks give the road scale without creating thousands of nodes.
-    _make_dashed_lane_markings()
-    _make_racing_curbs(route)
-
-    var rail_mat := _mat(Color(0.54, 0.60, 0.65), 0.32, 0.72)
-    var rail_glint := _mat(Color(0.79, 0.84, 0.88), 0.3, 0.66)
-    _make_ribbon(course_root, "LeftGuardrailLower", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 0.55, rail_mat)
-    _make_ribbon(course_root, "RightGuardrailLower", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 0.55, rail_mat)
-    _make_ribbon(course_root, "LeftGuardrailTop", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 1.05, rail_glint)
-    _make_ribbon(course_root, "RightGuardrailTop", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 1.05, rail_glint)
-    _make_guardrail_posts(rail_mat)
+func _calculate_normals(vertices: PackedVector3Array, indices: PackedInt32Array) -> PackedVector3Array:
+    var normals := PackedVector3Array()
+    normals.resize(vertices.size())
+    for i in range(0, indices.size(), 3):
+        var ia := indices[i]
+        var ib := indices[i + 1]
+        var ic := indices[i + 2]
+        var face := (vertices[ib] - vertices[ia]).cross(vertices[ic] - vertices[ia])
+        if face.length_squared() > 0.000001:
+            face = face.normalized()
+            normals[ia] += face
+            normals[ib] += face
+            normals[ic] += face
+    for i in range(normals.size()):
+        normals[i] = normals[i].normalized() if normals[i].length_squared() > 0.000001 else Vector3.UP
+    return normals
 
 
-func _make_asphalt_material(route: Dictionary) -> ShaderMaterial:
-    var shader := Shader.new()
-    shader.code = """
-shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx;
+func _texture_or_null(path: String) -> Texture2D:
+    if not ResourceLoader.exists(path):
+        return null
+    return ResourceLoader.load(path) as Texture2D
 
-uniform vec4 asphalt_color : source_color = vec4(0.10, 0.11, 0.12, 1.0);
 
-float hash_cell(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-void fragment() {
-    vec2 uv = UV;
-    float fine_grain = hash_cell(floor(uv * vec2(150.0, 190.0)));
-    float coarse_grain = hash_cell(floor(uv * vec2(5.0, 12.0)));
-    float speckle = (fine_grain - 0.5) * 0.105;
-    float patch = (coarse_grain - 0.5) * 0.075;
-    ALBEDO = asphalt_color.rgb * (0.91 + speckle + patch);
-    ROUGHNESS = 0.93;
-    METALLIC = 0.015;
-    SPECULAR = 0.20;
-}
-"""
-    var material := ShaderMaterial.new()
-    material.shader = shader
-    material.set_shader_parameter("asphalt_color", route["asphalt"])
+func _make_pbr_material(texture_set: String, tint: Color, uv_scale := Vector3.ONE) -> StandardMaterial3D:
+    var material := StandardMaterial3D.new()
+    material.albedo_color = tint
+    material.roughness = 0.9
+    material.metallic = 0.0
+    material.uv1_scale = uv_scale
+    material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+    var root := "res://assets/environment/" + texture_set
+    var diffuse := _texture_or_null(root + "_diff_1k.jpg")
+    var normal_map := _texture_or_null(root + "_nor_gl_1k.jpg")
+    var roughness_map := _texture_or_null(root + "_rough_1k.jpg")
+    if diffuse != null:
+        material.albedo_texture = diffuse
+    if normal_map != null:
+        material.normal_enabled = true
+        material.normal_texture = normal_map
+        material.normal_scale = 0.68
+    if roughness_map != null:
+        material.roughness_texture = roughness_map
+        material.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_RED
     return material
 
 
-func _make_racing_curbs(route: Dictionary) -> void:
-    var curb_mesh := BoxMesh.new()
-    curb_mesh.size = Vector3(0.60, 0.075, 8.5)
-    var transforms: Array[Transform3D] = []
-    var colors := PackedColorArray()
-    var accent: Color = route["accent"]
-    var ivory := Color(0.94, 0.93, 0.86)
-    var segments := int(route_length / 9.0)
-    for i in range(segments):
-        var d := float(i) * 9.0 + 4.5
-        var basis := Basis.looking_at(_forward_at(d), Vector3.UP)
-        var strip_color := accent if i % 2 == 0 else ivory
-        for side_value in [-1.0, 1.0]:
-            var side: float = side_value
-            var point := _point_at(d) + _right_at(d) * side * (ROAD_HALF - 0.60) + Vector3.UP * 0.045
-            transforms.append(Transform3D(basis, point))
-            colors.append(strip_color)
-    var curb_material := _mat(Color.WHITE, 0.7, 0.0)
-    curb_material.vertex_color_use_as_albedo = true
-    _add_instanced_mesh(course_root, "InstancedRaceKerbs", curb_mesh, curb_material, transforms, colors)
+func _make_asphalt_material(route: Dictionary) -> Material:
+    var tint := Color(0.91, 0.92, 0.94)
+    if route["kind"] == "city":
+        tint = Color(0.72, 0.78, 0.92)
+    return _make_pbr_material("asphalt_03", tint)
 
 
-func _make_dashed_lane_markings() -> void:
-    var count := int(route_length / 24.0)
-    var dash_mesh := BoxMesh.new()
-    dash_mesh.size = Vector3(0.11, 0.025, 7.2)
-    var dash_multi := MultiMesh.new()
-    dash_multi.transform_format = MultiMesh.TRANSFORM_3D
-    dash_multi.mesh = dash_mesh
-    dash_multi.instance_count = count * 2
-    var idx := 0
-    for i in range(count):
-        var d := 14.0 + float(i) * 24.0
-        var point := _point_at(d)
-        var forward := _forward_at(d)
-        var basis := Basis.looking_at(forward, Vector3.UP)
-        for lane_x in [-3.3, 3.3]:
-            var pos: Vector3 = point + _right_at(d) * float(lane_x) + Vector3.UP * 0.035
-            dash_multi.set_instance_transform(idx, Transform3D(basis, pos))
-            idx += 1
-    var instance := MultiMeshInstance3D.new()
-    instance.name = "InstancedLaneDashes"
-    instance.multimesh = dash_multi
-    instance.material_override = _mat(Color(0.88, 0.89, 0.85), 0.72)
-    instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(instance)
-
+func _build_route_surface() -> void:
+    var route: Dictionary = ROUTES[route_index]
+    var asphalt: Material = _make_asphalt_material(route)
+    var shoulder := _make_pbr_material("gravel_road", Color(0.78, 0.76, 0.70))
+    var edge_paint := _mat(Color(0.92, 0.92, 0.86), 0.8)
+    var yellow_paint := _mat(Color(0.96, 0.72, 0.12), 0.8)
+    _make_ribbon(course_root, "TexturedGravelShoulder", -ROAD_HALF - 2.8, ROAD_HALF + 2.8, -0.14, shoulder)
+    _make_ribbon(course_root, "PBRAsphaltRoad", -ROAD_HALF, ROAD_HALF, 0.0, asphalt)
+    _make_ribbon(course_root, "LeftRoadEdgeLine", -ROAD_HALF + 0.12, -ROAD_HALF + 0.30, 0.024, edge_paint)
+    _make_ribbon(course_root, "RightRoadEdgeLine", ROAD_HALF - 0.30, ROAD_HALF - 0.12, 0.024, edge_paint)
+    _make_ribbon(course_root, "CentreYellowLineLeft", -0.23, -0.11, 0.028, yellow_paint)
+    _make_ribbon(course_root, "CentreYellowLineRight", 0.11, 0.23, 0.028, yellow_paint)
+    var rail_mat := _mat(Color(0.52, 0.57, 0.61), 0.42, 0.55)
+    var rail_glint := _mat(Color(0.78, 0.81, 0.82), 0.38, 0.48)
+    _make_ribbon(course_root, "LeftGuardrailLower", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 0.53, rail_mat)
+    _make_ribbon(course_root, "RightGuardrailLower", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 0.53, rail_mat)
+    _make_ribbon(course_root, "LeftGuardrailTop", -ROAD_HALF - 1.65, -ROAD_HALF - 1.48, 1.02, rail_glint)
+    _make_ribbon(course_root, "RightGuardrailTop", ROAD_HALF + 1.48, ROAD_HALF + 1.65, 1.02, rail_glint)
+    _make_guardrail_posts(rail_mat)
 
 func _make_guardrail_posts(material: Material) -> void:
     var mesh := BoxMesh.new()
@@ -560,181 +522,194 @@ func _rebuild_route() -> void:
     _refresh_hud()
 
 
+func _terrain_height_offset(distance: float, lateral: float, kind: String) -> float:
+    var side := absf(lateral)
+    if side <= ROAD_HALF + 2.8:
+        return -0.42
+    var blend := clampf((side - ROAD_HALF - 2.8) / 22.0, 0.0, 1.0)
+    blend = blend * blend * (3.0 - 2.0 * blend)
+    var wave := sin(distance * 0.0041 + lateral * 0.023) * 2.3 + sin(distance * 0.014 + lateral * 0.061) * 0.75
+    var target_height := 1.0 + wave
+    if kind == "alpine":
+        target_height = 6.5 + absf(sin(distance * 0.0031 + lateral * 0.027)) * 24.0 + wave
+    elif kind == "coast":
+        target_height = 1.6 + wave
+        if lateral < 0.0 and side > 58.0:
+            var cliff_blend := clampf((side - 58.0) / 38.0, 0.0, 1.0)
+            cliff_blend = cliff_blend * cliff_blend * (3.0 - 2.0 * cliff_blend)
+            target_height = lerpf(target_height + 5.0, -5.5, cliff_blend)
+    elif kind == "city":
+        target_height = 0.3 + wave * 0.12
+    return lerpf(-0.42, target_height, blend)
+
+
 func _build_landscape() -> void:
-    var route: Dictionary = ROUTES[route_index]
-    var ground_mat := _mat(route["ground"], 1.0)
+    var kind: String = ROUTES[route_index]["kind"]
+    var terrain_tint := Color(0.83, 0.86, 0.77) if kind == "alpine" else (Color(0.50, 0.55, 0.62) if kind == "city" else Color(0.95, 0.94, 0.86))
+    var terrain_material := _make_pbr_material("forrest_ground_01", terrain_tint)
+    var rows := int(ceil(route_length / 16.0)) + 1
+    var lateral_extent := 180.0
+    var lateral_step := 6.0
+    var columns := int((lateral_extent * 2.0) / lateral_step) + 1
+    var vertices := PackedVector3Array()
+    var uvs := PackedVector2Array()
+    var indices := PackedInt32Array()
+    for row in range(rows):
+        var distance := minf(float(row) * 16.0, route_length)
+        var center := _point_at(distance)
+        var right := _right_at(distance)
+        for col in range(columns):
+            var lateral := -lateral_extent + float(col) * lateral_step
+            vertices.append(center + right * lateral + Vector3.UP * _terrain_height_offset(distance, lateral, kind))
+            uvs.append(Vector2((lateral + lateral_extent) / 8.0, distance / 8.0))
+            if row < rows - 1 and col < columns - 1:
+                var idx := row * columns + col
+                indices.append_array(PackedInt32Array([idx, idx + 1, idx + columns, idx + 1, idx + columns + 1, idx + columns]))
+    var arrays := []
+    arrays.resize(Mesh.ARRAY_MAX)
+    arrays[Mesh.ARRAY_VERTEX] = vertices
+    arrays[Mesh.ARRAY_TEX_UV] = uvs
+    arrays[Mesh.ARRAY_INDEX] = indices
+    arrays[Mesh.ARRAY_NORMAL] = _calculate_normals(vertices, indices)
+    var mesh := ArrayMesh.new()
+    mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+    mesh.surface_set_material(0, terrain_material)
     var terrain := MeshInstance3D.new()
-    terrain.name = "Terrain"
-    var plane := PlaneMesh.new()
-    plane.size = Vector2(1000.0, route_length + 700.0)
-    plane.subdivide_width = 1
-    plane.subdivide_depth = 1
-    terrain.mesh = plane
-    terrain.position = Vector3(0.0, -3.0, -route_length * 0.5)
-    terrain.material_override = ground_mat
+    terrain.name = "ContouredPBRLandscape"
+    terrain.mesh = mesh
+    terrain.material_override = terrain_material
     terrain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     course_root.add_child(terrain)
-
-    if route["kind"] == "coast":
-        var water := MeshInstance3D.new()
-        water.name = "Ocean"
-        var ocean_mesh := PlaneMesh.new()
-        ocean_mesh.size = Vector2(580.0, route_length + 1000.0)
-        water.mesh = ocean_mesh
-        water.position = Vector3(-258.0, -4.1, -route_length * 0.5)
-        var water_mat := _mat(Color(0.025, 0.24, 0.39), 0.22, 0.35)
-        water.material_override = water_mat
-        course_root.add_child(water)
-        _add_coastal_cliffs()
-
-    elif route["kind"] == "alpine":
-        _add_alpine_ridge()
-
-    else:
-        var city_ground := _mat(Color(0.035, 0.04, 0.075), 0.96)
-        _add_box(course_root, Vector3(180.0, 0.35, route_length + 200.0), Vector3(0.0, -2.72, -route_length * 0.5), city_ground, "UrbanPlinth")
+    if kind == "coast":
+        _build_coastal_water()
 
 
-func _add_coastal_cliffs() -> void:
-    var rock_mat := _mat(Color(0.50, 0.44, 0.33), 0.98)
-    var mesh := SphereMesh.new()
-    mesh.radius = 1.0
-    mesh.height = 2.0
-    mesh.radial_segments = 10
-    mesh.rings = 6
-    var multi := MultiMesh.new()
-    multi.transform_format = MultiMesh.TRANSFORM_3D
-    multi.mesh = mesh
-    var count := int(route_length / 18.0)
-    multi.instance_count = count
-    for i in range(count):
-        var d := float(i) * 18.0
-        var point := _point_at(d) + _right_at(d) * randf_range(18.0, 43.0)
-        var sx := randf_range(4.0, 15.0)
-        var sy := randf_range(4.0, 18.0)
-        var sz := randf_range(5.0, 17.0)
-        multi.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3(sx, sy, sz)), point + Vector3(0.0, sy * 0.38 - 1.8, 0.0)))
-    var cliffs := MultiMeshInstance3D.new()
-    cliffs.name = "CoastalRockFormations"
-    cliffs.multimesh = multi
-    cliffs.material_override = rock_mat
-    cliffs.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(cliffs)
-
-
-func _add_alpine_ridge() -> void:
-    var rock_mesh := SphereMesh.new()
-    rock_mesh.radius = 1.0
-    rock_mesh.height = 2.0
-    rock_mesh.radial_segments = 12
-    rock_mesh.rings = 6
-    var rock_multi := MultiMesh.new()
-    rock_multi.transform_format = MultiMesh.TRANSFORM_3D
-    rock_multi.mesh = rock_mesh
-    var count := int(route_length / 26.0) * 2
-    rock_multi.instance_count = count
-    var index := 0
-    for side in [-1.0, 1.0]:
-        for i in range(int(route_length / 26.0)):
-            var d := float(i) * 26.0 + 8.0
-            var base: Vector3 = _point_at(d) + _right_at(d) * side * randf_range(21.0, 42.0)
-            var height := randf_range(13.0, 43.0)
-            var width := randf_range(10.0, 25.0)
-            rock_multi.set_instance_transform(index, Transform3D(Basis.from_scale(Vector3(width, height, width * 1.2)), base + Vector3(0.0, height * 0.34, 0.0)))
-            index += 1
-    var peaks := MultiMeshInstance3D.new()
-    peaks.name = "AlpineRockRidge"
-    peaks.multimesh = rock_multi
-    peaks.material_override = _mat(Color(0.29, 0.34, 0.36), 0.99)
-    peaks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(peaks)
-
-    var snow_mesh := SphereMesh.new()
-    snow_mesh.radius = 1.0
-    snow_mesh.height = 2.0
-    snow_mesh.radial_segments = 10
-    snow_mesh.rings = 5
-    var snow_multi := MultiMesh.new()
-    snow_multi.transform_format = MultiMesh.TRANSFORM_3D
-    snow_multi.mesh = snow_mesh
-    snow_multi.instance_count = int(route_length / 55.0) * 2
-    index = 0
-    for side in [-1.0, 1.0]:
-        for i in range(int(route_length / 55.0)):
-            var d := float(i) * 55.0 + 12.0
-            var base: Vector3 = _point_at(d) + _right_at(d) * side * randf_range(44.0, 68.0)
-            var scale := randf_range(4.5, 11.0)
-            snow_multi.set_instance_transform(index, Transform3D(Basis.from_scale(Vector3(scale * 1.35, scale, scale)), base + Vector3(0.0, scale * 0.7, 0.0)))
-            index += 1
-    var snow := MultiMeshInstance3D.new()
-    snow.name = "SnowHighlights"
-    snow.multimesh = snow_multi
-    snow.material_override = _mat(Color(0.72, 0.79, 0.82), 0.95)
-    snow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(snow)
-
+func _build_coastal_water() -> void:
+    var arrays := []
+    arrays.resize(Mesh.ARRAY_MAX)
+    var vertices := PackedVector3Array()
+    var normals := PackedVector3Array()
+    var uvs := PackedVector2Array()
+    var indices := PackedInt32Array()
+    var rows := int(ceil(route_length / 14.0)) + 1
+    for i in range(rows):
+        var distance := minf(float(i) * 14.0, route_length)
+        var center := _point_at(distance)
+        var right := _right_at(distance)
+        vertices.append(Vector3(center.x - right.x * 520.0, -4.1, center.z - right.z * 520.0))
+        vertices.append(Vector3(center.x - right.x * 98.0, -4.1, center.z - right.z * 98.0))
+        normals.append(Vector3.UP)
+        normals.append(Vector3.UP)
+        uvs.append(Vector2(0.0, distance / 24.0))
+        uvs.append(Vector2(12.0, distance / 24.0))
+        if i < rows - 1:
+            var idx := i * 2
+            indices.append_array(PackedInt32Array([idx, idx + 1, idx + 2, idx + 1, idx + 3, idx + 2]))
+    arrays[Mesh.ARRAY_VERTEX] = vertices
+    arrays[Mesh.ARRAY_NORMAL] = normals
+    arrays[Mesh.ARRAY_TEX_UV] = uvs
+    arrays[Mesh.ARRAY_INDEX] = indices
+    var mesh := ArrayMesh.new()
+    mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+    var water := MeshInstance3D.new()
+    water.name = "CoastalOcean"
+    water.mesh = mesh
+    var material := _mat(Color(0.025, 0.18, 0.27), 0.18, 0.28)
+    material.cull_mode = BaseMaterial3D.CULL_DISABLED
+    material.metallic = 0.16
+    water.material_override = material
+    water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    course_root.add_child(water)
 
 func _build_route_props() -> void:
     var kind: String = ROUTES[route_index]["kind"]
     if kind == "city":
         _build_city_props()
+        _build_nature_props("city")
     else:
         _build_nature_props(kind)
 
 
 func _build_nature_props(kind: String) -> void:
-    var count := int(route_length / 13.0)
+    var spacing := 58.0 if kind == "city" else (19.0 if kind == "alpine" else 17.0)
+    var count := maxi(1, int(route_length / spacing))
+    var trunk_height := 3.6 if kind == "city" else (4.4 if kind == "alpine" else 3.8)
     var trunk_mesh := CylinderMesh.new()
-    trunk_mesh.top_radius = 0.13 if kind == "coast" else 0.20
-    trunk_mesh.bottom_radius = 0.22 if kind == "coast" else 0.30
-    trunk_mesh.height = 3.0 if kind == "coast" else 4.0
-    trunk_mesh.radial_segments = 8
+    trunk_mesh.top_radius = 0.16 if kind != "alpine" else 0.20
+    trunk_mesh.bottom_radius = 0.28 if kind != "alpine" else 0.34
+    trunk_mesh.height = trunk_height
+    trunk_mesh.radial_segments = 9
+    var trunk_transforms: Array[Transform3D] = []
+    var trunk_colors := PackedColorArray()
+    var broadleaf_transforms: Array[Transform3D] = []
+    var broadleaf_colors := PackedColorArray()
+    var pine_meshes: Array[Mesh] = []
+    var pine_transforms: Array = []
+    var pine_colors: Array = []
+    if kind == "alpine":
+        for layer in range(4):
+            var cone := CylinderMesh.new()
+            cone.top_radius = 0.025
+            cone.bottom_radius = 2.65 - float(layer) * 0.48
+            cone.height = 4.35
+            cone.radial_segments = 11
+            cone.rings = 2
+            pine_meshes.append(cone)
+            pine_transforms.append([])
+            pine_colors.append(PackedColorArray())
     var canopy_mesh := SphereMesh.new()
-    canopy_mesh.radius = 1.25 if kind == "coast" else 1.7
-    canopy_mesh.height = 2.65 if kind == "coast" else 3.2
-    canopy_mesh.radial_segments = 10
-    canopy_mesh.rings = 6
-    var trunk_multi := MultiMesh.new()
-    trunk_multi.transform_format = MultiMesh.TRANSFORM_3D
-    trunk_multi.mesh = trunk_mesh
-    var canopy_multi := MultiMesh.new()
-    canopy_multi.transform_format = MultiMesh.TRANSFORM_3D
-    canopy_multi.mesh = canopy_mesh
-    var tree_total := count * 2
-    trunk_multi.instance_count = tree_total
-    canopy_multi.instance_count = tree_total
-
-    var crown_colors := [
-        Color(0.07, 0.30, 0.14) if kind == "coast" else Color(0.06, 0.22, 0.12),
-        Color(0.12, 0.38, 0.16) if kind == "coast" else Color(0.12, 0.29, 0.13),
-        Color(0.17, 0.34, 0.16) if kind == "coast" else Color(0.15, 0.25, 0.13),
-    ]
-    var idx := 0
-    for side in [-1.0, 1.0]:
+    canopy_mesh.radius = 1.0
+    canopy_mesh.height = 2.0
+    canopy_mesh.radial_segments = 12
+    canopy_mesh.rings = 8
+    var bark := [Color(0.30, 0.21, 0.14), Color(0.37, 0.27, 0.18), Color(0.25, 0.20, 0.15)]
+    var leaves := [Color(0.10, 0.27, 0.12), Color(0.16, 0.34, 0.15), Color(0.19, 0.38, 0.17), Color(0.12, 0.30, 0.14)]
+    if kind == "alpine":
+        leaves = [Color(0.055, 0.22, 0.13), Color(0.075, 0.28, 0.15), Color(0.09, 0.31, 0.17), Color(0.06, 0.25, 0.13)]
+    var tree_index := 0
+    for side_value in [-1.0, 1.0]:
+        var side: float = side_value
         for i in range(count):
-            var d := float(i) * 13.0 + 4.0
-            var offset := randf_range(13.0, 33.0) if kind == "coast" else randf_range(12.0, 26.0)
-            var tree_pos: Vector3 = _point_at(d) + _right_at(d) * side * offset
-            var scale := randf_range(0.68, 1.42)
-            var trunk_scale := Basis.from_scale(Vector3(scale, scale, scale))
-            trunk_multi.set_instance_transform(idx, Transform3D(trunk_scale, tree_pos + Vector3(0.0, 1.5 * scale - 2.7, 0.0)))
-            canopy_multi.set_instance_transform(idx, Transform3D(trunk_scale, tree_pos + Vector3(0.0, 3.1 * scale - 1.2, 0.0)))
-            idx += 1
-    var trunks := MultiMeshInstance3D.new()
-    trunks.name = "InstancedTreeTrunks"
-    trunks.multimesh = trunk_multi
-    trunks.material_override = _mat(Color(0.25, 0.15, 0.085) if kind == "coast" else Color(0.30, 0.28, 0.22), 0.96)
-    trunks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(trunks)
-    var canopies := MultiMeshInstance3D.new()
-    canopies.name = "InstancedCanopies"
-    canopies.multimesh = canopy_multi
-    canopies.material_override = _mat(crown_colors[0].lerp(crown_colors[1], 0.55), 0.92)
-    canopies.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-    course_root.add_child(canopies)
+            var d := float(i) * spacing + spacing * 0.5 + randf_range(-2.0, 2.0)
+            if d >= route_length:
+                continue
+            var lateral := randf_range(10.5, 16.0) if kind == "city" else (randf_range(15.0, 33.0) if kind == "coast" else randf_range(13.0, 26.0))
+            var base := _point_at(d) + _right_at(d) * side * lateral
+            base.y += _terrain_height_offset(d, side * lateral, kind)
+            var scale := randf_range(0.78, 1.32) if kind != "city" else randf_range(0.72, 1.05)
+            var rotation := Basis(Vector3.UP, randf_range(-PI, PI))
+            trunk_transforms.append(Transform3D(rotation * Basis.from_scale(Vector3.ONE * scale), base + Vector3.UP * trunk_height * 0.5 * scale))
+            trunk_colors.append(bark[tree_index % bark.size()])
+            if kind == "alpine":
+                for layer in range(4):
+                    var tier_transforms: Array = pine_transforms[layer]
+                    var tier_colors: PackedColorArray = pine_colors[layer]
+                    tier_transforms.append(Transform3D(rotation * Basis.from_scale(Vector3.ONE * scale), base + Vector3.UP * ((2.65 + float(layer) * 2.22) * scale)))
+                    tier_colors.append(leaves[(tree_index + layer) % leaves.size()])
+                    pine_transforms[layer] = tier_transforms
+                    pine_colors[layer] = tier_colors
+            else:
+                var offsets := [Vector3(0.0, 5.0, 0.0), Vector3(-0.88, 4.45, 0.12), Vector3(0.92, 4.50, -0.10), Vector3(0.12, 5.65, -0.18)]
+                var scales := [Vector3(1.75, 1.55, 1.75), Vector3(1.32, 1.18, 1.35), Vector3(1.38, 1.22, 1.30), Vector3(1.18, 1.08, 1.20)]
+                for part in range(offsets.size()):
+                    broadleaf_transforms.append(Transform3D(rotation * Basis.from_scale(scales[part] * scale), base + rotation * offsets[part] * scale))
+                    broadleaf_colors.append(leaves[(tree_index + part) % leaves.size()])
+            tree_index += 1
+    var bark_mat := _mat(Color.WHITE, 0.92)
+    bark_mat.vertex_color_use_as_albedo = true
+    var trunks := _add_instanced_mesh(course_root, "InstancedTreeTrunks", trunk_mesh, bark_mat, trunk_transforms, trunk_colors)
+    trunks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+    var leaf_mat := _mat(Color.WHITE, 0.91)
+    leaf_mat.vertex_color_use_as_albedo = true
+    if kind == "alpine":
+        for layer in range(4):
+            var pine := _add_instanced_mesh(course_root, "InstancedPineCanopyTier_%d" % layer, pine_meshes[layer], leaf_mat, pine_transforms[layer], pine_colors[layer])
+            pine.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+    else:
+        var canopy := _add_instanced_mesh(course_root, "InstancedBroadleafCanopyClusters", canopy_mesh, leaf_mat, broadleaf_transforms, broadleaf_colors)
+        canopy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
-
-func _add_instanced_mesh(parent: Node3D, node_name: String, mesh: Mesh, material: Material, transforms: Array[Transform3D], colors: PackedColorArray = PackedColorArray()) -> MultiMeshInstance3D:
+func _add_instanced_mesh(parent: Node3D, node_name: String, mesh: Mesh, material: Material, transforms: Array, colors: PackedColorArray = PackedColorArray()) -> MultiMeshInstance3D:
     var multi := MultiMesh.new()
     multi.transform_format = MultiMesh.TRANSFORM_3D
     multi.mesh = mesh
@@ -777,13 +752,14 @@ func _build_city_props() -> void:
             var road_point := _point_at(d)
             var right := _right_at(d)
             var base := road_point + right * side_offset
+            base.y += _terrain_height_offset(d, side_offset, "city")
             var height := randf_range(11.0, 38.0)
             var width := randf_range(8.0, 16.0)
             var depth := randf_range(13.0, 23.0)
             var yaw := atan2(_forward_at(d).x, -_forward_at(d).z)
             var rotation_basis := Basis(Vector3.UP, yaw)
             var facade_basis := rotation_basis * Basis.from_scale(Vector3(width, height, depth))
-            var facade_origin := base + Vector3(0.0, height * 0.5 - 2.7, 0.0)
+            var facade_origin := base + Vector3(0.0, height * 0.5, 0.0)
             facade_transforms.append(Transform3D(facade_basis, facade_origin))
             facade_instance_colors.append(facade_colors[i % facade_colors.size()])
 
@@ -820,6 +796,7 @@ func _build_city_props() -> void:
         for i in range(int(route_length / 42.0)):
             var d := float(i) * 42.0 + 18.0
             var p := _point_at(d) + _right_at(d) * side * 10.4
+            p.y += _terrain_height_offset(d, side * 10.4, "city")
             var basis := Basis.looking_at(_forward_at(d), Vector3.UP)
             lamp_pole_transforms.append(Transform3D(basis, p + Vector3.UP * 2.9))
             var lamp_pos := p + Vector3.UP * 5.95
@@ -832,147 +809,104 @@ func _build_city_props() -> void:
     _add_instanced_mesh(course_root, "CyanStreetlights", lamp_mesh, _emissive_mat(Color(0.04, 0.68, 1.0), 2.2), cyan_lamp_transforms)
     _add_instanced_mesh(course_root, "AmberStreetlights", lamp_mesh, _emissive_mat(Color(1.0, 0.28, 0.07), 1.9), warm_lamp_transforms)
 
-    # Five illuminated overhead gates work as visual landmarks between sectors.
-    var cyan := _emissive_mat(Color(0.04, 0.70, 1.0), 1.8)
-    var warm := _emissive_mat(Color(1.0, 0.34, 0.10), 1.35)
-    for d in [300.0, 1150.0, 2100.0, 3100.0, 3900.0]:
-        if d < route_length:
-            var gate := Node3D.new()
-            gate.name = "NeonGantry"
-            gate.position = _point_at(d) + Vector3(0.0, 7.4, 0.0)
-            gate.rotation.y = atan2(_forward_at(d).x, -_forward_at(d).z)
-            course_root.add_child(gate)
-            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(-ROAD_WIDTH * 0.55, -3.6, 0.0), cyan, "LeftPillar")
-            _add_box(gate, Vector3(0.22, 7.0, 0.28), Vector3(ROAD_WIDTH * 0.55, -3.6, 0.0), warm, "RightPillar")
-            _add_box(gate, Vector3(ROAD_WIDTH * 1.15, 0.22, 0.3), Vector3(0.0, 0.0, 0.0), cyan, "TopBar")
+    func _build_traffic() -> void:
+    traffic_nodes.clear()
+    var traffic_index := 0
+    for distance in range(145, int(route_length) - 100, 295):
+        _create_traffic_car(float(distance), 2.35, traffic_index, 1)
+        traffic_index += 1
+    traffic_index = 0
+    for distance in range(int(route_length) - 145, 100, -315):
+        _create_traffic_car(float(distance), -2.35, traffic_index + 20, -1)
+        traffic_index += 1
 
 
-func _build_race_objects() -> void:
-    coin_nodes.clear()
-    obstacle_nodes.clear()
-    checkpoint_distances.clear()
-    next_checkpoint = 0
-
-    for i in range(1, 7):
-        checkpoint_distances.append(route_length * float(i) / 7.0)
-
-    var coin_mat := _emissive_mat(Color(1.0, 0.65, 0.075), 1.25)
-    var coin_mesh := CylinderMesh.new()
-    coin_mesh.top_radius = 0.48
-    coin_mesh.bottom_radius = 0.48
-    coin_mesh.height = 0.13
-    coin_mesh.radial_segments = 20
-    for i in range(1, int(route_length / 33.0)):
-        var d := float(i) * 33.0 + 20.0
-        if d >= route_length - 65.0:
-            continue
-        var lane: float = [-4.4, -2.2, 0.0, 2.2, 4.4][i % 5]
-        var coin := MeshInstance3D.new()
-        coin.name = "PickupCoin"
-        coin.mesh = coin_mesh
-        coin.material_override = coin_mat
-        coin.position = _point_at(d) + _right_at(d) * lane + Vector3.UP * 1.15
-        coin.rotation.x = PI * 0.5
-        course_root.add_child(coin)
-        coin_nodes.append({"root": coin, "distance": d, "lane": lane, "taken": false})
-
-    for i in range(1, int(route_length / 67.0)):
-        var d := float(i) * 67.0 + 47.0
-        if d >= route_length - 90.0 or i % 4 == 0:
-            continue
-        var lane: float = [-4.45, -2.2, 0.0, 2.2, 4.45][(i * 3 + route_index) % 5]
-        if i % 3 == 0:
-            _create_traffic_car(d, lane, i)
-        elif i % 3 == 1:
-            _create_barrier(d, lane, i)
-        else:
-            _create_boost_pad(d, lane, i)
-
-
-func _create_traffic_car(distance: float, lane: float, seed_id: int) -> void:
+func _create_traffic_car(distance: float, lane: float, seed_id: int, direction: int) -> void:
     var root := Node3D.new()
     root.name = "TrafficVehicle_%02d" % seed_id
-    root.position = _point_at(distance) + _right_at(distance) * lane
-    root.basis = Basis.looking_at(_forward_at(distance), Vector3.UP)
     course_root.add_child(root)
-    var palette := [Color(0.76, 0.08, 0.075), Color(0.83, 0.78, 0.63), Color(0.05, 0.29, 0.78), Color(0.075, 0.09, 0.12), Color(0.92, 0.40, 0.06)]
-    _add_box(root, Vector3(1.8, 0.64, 3.6), Vector3(0.0, 0.58, 0.0), _mat(palette[seed_id % palette.size()], 0.27, 0.27), "Body")
-    _add_box(root, Vector3(1.3, 0.50, 1.62), Vector3(0.0, 1.06, 0.10), _mat(Color(0.028, 0.06, 0.095), 0.16, 0.18), "Glass")
-    var headlamp := _emissive_mat(Color(0.78, 0.91, 1.0), 1.4)
-    _add_box(root, Vector3(0.35, 0.12, 0.08), Vector3(-0.57, 0.59, -1.82), headlamp, "LeftHeadlight")
-    _add_box(root, Vector3(0.35, 0.12, 0.08), Vector3(0.57, 0.59, -1.82), headlamp, "RightHeadlight")
-    for x in [-0.94, 0.94]:
-        for z in [-1.12, 1.12]:
-            var wheel := MeshInstance3D.new()
-            var mesh := CylinderMesh.new()
-            mesh.top_radius = 0.34
-            mesh.bottom_radius = 0.34
-            mesh.height = 0.22
-            mesh.radial_segments = 12
-            wheel.mesh = mesh
-            wheel.rotation.z = PI * 0.5
-            wheel.position = Vector3(x, 0.34, z)
-            wheel.material_override = _mat(Color(0.018, 0.022, 0.028), 0.95)
-            root.add_child(wheel)
-    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "car"})
+    var model_paths := ["res://assets/cars/titan_gt.glb", "res://assets/cars/zenith_x1.glb", "res://assets/cars/rallyfox_x.glb"]
+    var packed := ResourceLoader.load(model_paths[posmod(seed_id, model_paths.size())], "PackedScene") as PackedScene
+    var visual: Node3D
+    if packed != null:
+        var instance := packed.instantiate()
+        if instance is Node3D:
+            visual = instance as Node3D
+            root.add_child(visual)
+            _normalize_car_visual(visual, 3.85)
+            _set_car_shadow(visual, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
+        else:
+            instance.free()
+            visual = _make_traffic_fallback(root, seed_id)
+    else:
+        visual = _make_traffic_fallback(root, seed_id)
+    var speed := randf_range(17.0, 24.0) if direction > 0 else randf_range(20.0, 28.0)
+    var item := {"root": root, "visual": visual, "distance": distance, "previous_distance": distance, "original_distance": distance, "lane": lane, "speed": speed, "direction": direction}
+    traffic_nodes.append(item)
+    _place_traffic_item(item)
 
 
-func _create_barrier(distance: float, lane: float, seed_id: int) -> void:
-    var root := Node3D.new()
-    root.name = "TrackBarrier_%02d" % seed_id
-    root.position = _point_at(distance) + _right_at(distance) * lane
-    root.basis = Basis.looking_at(_forward_at(distance), Vector3.UP)
-    course_root.add_child(root)
-    _add_box(root, Vector3(1.35, 0.76, 0.76), Vector3(0.0, 0.4, 0.0), _mat(Color(0.94, 0.24, 0.045), 0.58), "BarrierBody")
-    _add_box(root, Vector3(1.38, 0.15, 0.79), Vector3(0.0, 0.57, 0.0), _mat(Color(0.96, 0.88, 0.69), 0.6), "ReflectiveBand")
-    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "barrier"})
+func _make_traffic_fallback(parent: Node3D, seed_id: int) -> Node3D:
+    var visual := Node3D.new()
+    visual.name = "TrafficFallback"
+    parent.add_child(visual)
+    var palette := [Color(0.62, 0.08, 0.07), Color(0.75, 0.78, 0.78), Color(0.06, 0.18, 0.43), Color(0.10, 0.11, 0.12)]
+    _add_box(visual, Vector3(1.78, 0.62, 3.70), Vector3(0.0, 0.52, 0.0), _mat(palette[posmod(seed_id, palette.size())], 0.26, 0.25), "FallbackBody")
+    _add_box(visual, Vector3(1.28, 0.45, 1.72), Vector3(0.0, 0.93, 0.05), _mat(Color(0.025, 0.045, 0.065), 0.14, 0.15), "FallbackGlass")
+    return visual
 
 
-func _create_boost_pad(distance: float, lane: float, seed_id: int) -> void:
-    var root := Node3D.new()
-    root.name = "NitroPad_%02d" % seed_id
-    root.position = _point_at(distance) + _right_at(distance) * lane + Vector3.UP * 0.055
-    root.basis = Basis.looking_at(_forward_at(distance), Vector3.UP)
-    course_root.add_child(root)
-    var pad_mat := _emissive_mat(Color(0.06, 0.80, 1.0), 1.4)
-    _add_box(root, Vector3(1.65, 0.09, 3.5), Vector3.ZERO, pad_mat, "BoostPad")
-    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "boost"})
+func _set_car_shadow(node: Node, shadow_setting: int) -> void:
+    if node is GeometryInstance3D:
+        (node as GeometryInstance3D).cast_shadow = shadow_setting
+    for child in node.get_children():
+        _set_car_shadow(child, shadow_setting)
 
 
-func _build_race_gates() -> void:
-    var start_mat := _emissive_mat(Color(0.10, 0.85, 1.0), 1.2)
-    var finish_mat := _emissive_mat(Color(1.0, 0.63, 0.11), 1.6)
-    _create_race_gate(16.0, "START", start_mat)
-    for i in range(checkpoint_distances.size()):
-        _create_race_gate(checkpoint_distances[i], "CHECKPOINT %02d" % (i + 1), start_mat if i % 2 == 0 else finish_mat)
-    _create_race_gate(route_length - 18.0, "FINISH", finish_mat)
+func _advance_traffic(delta: float) -> void:
+    for item in traffic_nodes:
+        item["previous_distance"] = float(item["distance"])
+        item["distance"] = float(item["distance"]) + float(item["speed"]) * int(item["direction"]) * delta
+        _place_traffic_item(item)
 
 
-func _create_race_gate(distance: float, sign_text: String, accent_material: Material) -> void:
-    var gate := Node3D.new()
-    gate.name = "RaceGate_" + sign_text.replace(" ", "_")
-    gate.position = _point_at(distance)
-    gate.basis = Basis.looking_at(_forward_at(distance), Vector3.UP)
-    course_root.add_child(gate)
+func _place_traffic_item(item: Dictionary) -> void:
+    var d := float(item["distance"])
+    var root := item["root"] as Node3D
+    var visual := item["visual"] as Node3D
+    if not is_instance_valid(root):
+        return
+    if d < 0.0 or d > route_length:
+        root.visible = false
+        return
+    root.position = _point_at(d) + _right_at(d) * float(item["lane"]) + Vector3.UP * 0.025
+    var forward := _forward_at(d)
+    if int(item["direction"]) < 0:
+        forward = -forward
+    root.basis = Basis.looking_at(forward, Vector3.UP)
+    root.visible = absf(d - travel_distance) <= 240.0
+    if is_instance_valid(visual):
+        visual.visible = root.visible
 
-    var dark_metal := _mat(Color(0.035, 0.06, 0.09), 0.28, 0.72)
-    _add_box(gate, Vector3(0.34, 5.9, 0.40), Vector3(-9.15, 2.95, 0.0), dark_metal, "LeftUpright")
-    _add_box(gate, Vector3(0.34, 5.9, 0.40), Vector3(9.15, 2.95, 0.0), dark_metal, "RightUpright")
-    _add_box(gate, Vector3(18.8, 0.45, 0.58), Vector3(0.0, 5.85, 0.0), accent_material, "IlluminatedCrossbar")
-    _add_box(gate, Vector3(8.2, 1.08, 0.45), Vector3(0.0, 4.92, 0.36), _mat(Color(0.015, 0.03, 0.05), 0.35, 0.25), "SignPanel")
 
-    var sign := Label3D.new()
-    sign.name = "GateSign"
-    sign.text = sign_text
-    sign.font_size = 82
-    sign.pixel_size = 0.010
-    sign.outline_size = 10
-    sign.outline_modulate = Color(0.005, 0.01, 0.02, 1.0)
-    sign.modulate = Color(1.0, 1.0, 1.0, 1.0)
-    sign.position = Vector3(0.0, 4.68, 0.62)
-    sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-    gate.add_child(sign)
-
+func _check_traffic_collisions(previous_player_distance: float, previous_player_lane: float) -> void:
+    for item in traffic_nodes:
+        var root := item["root"] as Node3D
+        if not is_instance_valid(root) or not root.visible:
+            continue
+        var start_gap := float(item["previous_distance"]) - previous_player_distance
+        var end_gap := float(item["distance"]) - travel_distance
+        if absf(end_gap) > 3.6 and start_gap * end_gap > 0.0:
+            continue
+        var denominator := absf(start_gap) + absf(end_gap)
+        var ratio := 1.0 if denominator < 0.001 else clampf(absf(start_gap) / denominator, 0.0, 1.0)
+        var player_lane_at_contact := lerpf(previous_player_lane, lateral_offset, ratio)
+        if absf(float(item["lane"]) - player_lane_at_contact) < 1.85:
+            race_over = true
+            current_speed = 0.0
+            drive_started = false
+            message_label.text = "COLLISION  •  TAP RESTART TO DRIVE AGAIN"
+            return
 
 func _build_player() -> void:
     player_root = Node3D.new()
@@ -981,26 +915,26 @@ func _build_player() -> void:
     chase_camera = Camera3D.new()
     chase_camera.name = "ChaseCamera"
     chase_camera.current = true
-    chase_camera.fov = 73.0
-    chase_camera.near = 0.06
+    chase_camera.fov = 66.0
+    chase_camera.near = 0.10
     chase_camera.far = 600.0
     add_child(chase_camera)
 
 
 func _place_player_and_camera(delta: float) -> void:
     var point := _point_at(travel_distance) + _right_at(travel_distance) * lateral_offset
-    point.y += 0.09
+    point.y += 0.005
     player_root.position = point
-    var forward := _forward_at(travel_distance)
-    player_root.basis = Basis.looking_at(forward, Vector3.UP)
-    # Keep the imported model's normalization offset; resetting its X coordinate
-    # here mis-centres vehicles whose source pivot is not at the origin.
-    var cam_target := point - forward * 9.4 + Vector3.UP * 4.3
-    chase_camera.global_position = chase_camera.global_position.lerp(cam_target, clampf(delta * 4.2, 0.0, 1.0))
-    var look_target := point + forward * 13.0 + Vector3.UP * 1.0
-    chase_camera.look_at(look_target, Vector3.UP)
-    if is_instance_valid(car_visual):
-        car_visual.rotation.z = -steering_touch * 0.035
+    var road_forward := _forward_at(travel_distance)
+    var grade := road_forward.y / maxf(Vector2(road_forward.x, road_forward.z).length(), 0.001)
+    var horizontal_forward := Vector3(sin(vehicle_heading), 0.0, -cos(vehicle_heading))
+    var vehicle_forward := Vector3(horizontal_forward.x, grade, horizontal_forward.z).normalized()
+    if vehicle_forward.length_squared() < 0.001:
+        vehicle_forward = road_forward
+    player_root.basis = Basis.looking_at(vehicle_forward, Vector3.UP)
+    var cam_target := point - vehicle_forward * 7.6 + Vector3.UP * 2.35
+    chase_camera.global_position = chase_camera.global_position.lerp(cam_target, clampf(delta * 5.0, 0.0, 1.0))
+    chase_camera.look_at(point + vehicle_forward * 12.0 + Vector3.UP * 0.65, Vector3.UP)
 
 
 func _collect_bounds(node: Node, transform_to_root: Transform3D, points: Array) -> void:
@@ -1010,30 +944,45 @@ func _collect_bounds(node: Node, transform_to_root: Transform3D, points: Array) 
     if node is MeshInstance3D and node.mesh != null:
         var bounds: AABB = node.mesh.get_aabb()
         for bits in range(8):
-            var corner := bounds.position + Vector3(
-                bounds.size.x if (bits & 1) != 0 else 0.0,
-                bounds.size.y if (bits & 2) != 0 else 0.0,
-                bounds.size.z if (bits & 4) != 0 else 0.0
-            )
+            var corner := bounds.position + Vector3(bounds.size.x if (bits & 1) != 0 else 0.0, bounds.size.y if (bits & 2) != 0 else 0.0, bounds.size.z if (bits & 4) != 0 else 0.0)
             points.append(local_transform * corner)
     for child in node.get_children():
         _collect_bounds(child, local_transform, points)
 
 
+func _normalize_car_visual(visual: Node3D, target_length: float) -> void:
+    var points: Array = []
+    _collect_bounds(visual, Transform3D.IDENTITY, points)
+    if points.is_empty():
+        visual.scale = Vector3.ONE * 0.5
+        visual.position = Vector3(0.0, 0.005, 0.0)
+        return
+    var low := Vector3(INF, INF, INF)
+    var high := Vector3(-INF, -INF, -INF)
+    for point in points:
+        low = low.min(point)
+        high = high.max(point)
+    var dimensions := high - low
+    var factor := target_length / maxf(maxf(dimensions.x, dimensions.z), 0.001)
+    var yaw := PI * 0.5 if dimensions.x > dimensions.z else 0.0
+    var rotation := Basis(Vector3.UP, yaw)
+    var adjusted_low := Vector3(INF, INF, INF)
+    var adjusted_high := Vector3(-INF, -INF, -INF)
+    for point in points:
+        var adjusted := rotation * point * factor
+        adjusted_low = adjusted_low.min(adjusted)
+        adjusted_high = adjusted_high.max(adjusted)
+    visual.rotation = Vector3(0.0, yaw, 0.0)
+    visual.scale = Vector3.ONE * factor
+    visual.position = Vector3(-(adjusted_low.x + adjusted_high.x) * 0.5, -adjusted_low.y + 0.005, -(adjusted_low.z + adjusted_high.z) * 0.5)
+
+
 func _load_selected_car() -> void:
     if is_instance_valid(car_visual):
-        # Free immediately before loading the next model to avoid a one-frame
-        # overlap of two full-resolution car scenes on memory-constrained phones.
         car_visual.free()
         car_visual = null
     var entry: Dictionary = CARS[car_index]
-    var packed: PackedScene = null
-    # Exported Godot packages remap imported .glb files to generated .scn
-    # resources and may omit the original GLB bytes. ResourceLoader resolves
-    # that remap; FileAccess.file_exists does not reliably do so.
-    # IGNORE_DEEP also avoids retaining all nine cars' textures in the global
-    # resource cache after players cycle through the garage.
-    packed = ResourceLoader.load(String(entry["file"]), "PackedScene", ResourceLoader.CACHE_MODE_IGNORE_DEEP) as PackedScene
+    var packed := ResourceLoader.load(String(entry["file"]), "PackedScene", ResourceLoader.CACHE_MODE_IGNORE_DEEP) as PackedScene
     if packed == null:
         _make_fallback_car()
         car_label.text = "%s  •  fallback model" % entry["name"]
@@ -1046,29 +995,9 @@ func _load_selected_car() -> void:
         return
     car_visual = instance as Node3D
     player_root.add_child(car_visual)
-    var points: Array = []
-    _collect_bounds(car_visual, Transform3D.IDENTITY, points)
-    if points.is_empty():
-        car_visual.scale = Vector3.ONE * 0.5
-        car_visual.position.y = 0.14
-    else:
-        var low := Vector3(INF, INF, INF)
-        var high := Vector3(-INF, -INF, -INF)
-        for point in points:
-            low = low.min(point)
-            high = high.max(point)
-        var dimensions := high - low
-        var longest := maxf(dimensions.x, dimensions.z)
-        var factor := 4.25 / maxf(longest, 0.001)
-        var yaw := PI * 0.5 if dimensions.x > dimensions.z else 0.0
-        car_visual.rotation.y = yaw
-        car_visual.scale = Vector3.ONE * factor
-        var center := (low + high) * 0.5
-        var offset := -(Basis(Vector3.UP, yaw) * Vector3(center.x * factor, 0.0, center.z * factor))
-        offset.y = -low.y * factor
-        car_visual.position = offset
+    _normalize_car_visual(car_visual, 4.25)
+    _set_car_shadow(car_visual, GeometryInstance3D.SHADOW_CASTING_SETTING_ON)
     car_label.text = "%02d / %02d  •  %s" % [car_index + 1, CARS.size(), entry["name"]]
-
 
 func _make_fallback_car() -> void:
     car_visual = Node3D.new()
@@ -1095,58 +1024,6 @@ func _make_fallback_car() -> void:
             car_visual.add_child(wheel)
 
 
-func _check_pickups_and_collisions(previous_distance: float = -1.0, previous_lane: float = INF) -> void:
-    if previous_distance < 0.0:
-        previous_distance = travel_distance
-    if is_inf(previous_lane):
-        previous_lane = lateral_offset
-
-    for item in coin_nodes:
-        if item["taken"]:
-            continue
-        var item_distance := float(item["distance"])
-        var item_lane := _lane_at_distance(item_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
-        # Ignore coins not crossed by this frame or outside the pickup lane.
-        # The inverse condition awarded coins when the car missed them.
-        if not _crossed_distance(item_distance, previous_distance, travel_distance, 2.4) or absf(float(item["lane"]) - item_lane) >= 1.55:
-            continue
-        item["taken"] = true
-        var coin_root: Node3D = item["root"]
-        if is_instance_valid(coin_root):
-            coin_root.visible = false
-        coins_collected += 1
-        score_label.text = "SCORE  %07d" % _score()
-    for obstacle in obstacle_nodes:
-        var obstacle_distance := float(obstacle["distance"])
-        var obstacle_lane := _lane_at_distance(obstacle_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
-        var lane_gap := absf(float(obstacle["lane"]) - obstacle_lane)
-        if _crossed_distance(obstacle_distance, previous_distance, travel_distance, 2.15) and lane_gap < 1.45:
-            if obstacle["kind"] == "boost":
-                nitro_bar.value = minf(100.0, nitro_bar.value + 32.0)
-                obstacle["distance"] = -10000.0
-                var pad: Node3D = obstacle["root"]
-                if is_instance_valid(pad):
-                    pad.visible = false
-                message_label.text = "NITRO PICKUP  •  BOOST REFILLED"
-            else:
-                race_over = true
-                current_speed = 0.0
-                message_label.text = "CRASH!  •  TAP RESTART TO TRY AGAIN"
-                return
-
-
-func _crossed_distance(target: float, from_distance: float, to_distance: float, tolerance: float) -> bool:
-    var low := minf(from_distance, to_distance) - tolerance
-    var high := maxf(from_distance, to_distance) + tolerance
-    return target >= low and target <= high
-
-
-func _lane_at_distance(target_distance: float, from_distance: float, to_distance: float, from_lane: float, to_lane: float) -> float:
-    var span := to_distance - from_distance
-    if absf(span) < 0.0001:
-        return to_lane
-    var ratio := clampf((target_distance - from_distance) / span, 0.0, 1.0)
-    return lerpf(from_lane, to_lane, ratio)
 
 
 func _build_hud() -> void:
@@ -1170,7 +1047,7 @@ func _build_hud() -> void:
     top_panel.add_child(info)
 
     var logo := Label.new()
-    logo.text = "TURBO TRAILS   /   ARCADE RACING"
+    logo.text = "TURBO TRAILS   /   3D DRIVE SIMULATION"
     logo.add_theme_font_size_override("font_size", 17)
     logo.add_theme_color_override("font_color", Color(0.36, 0.83, 1.0))
     info.add_child(logo)
@@ -1266,28 +1143,6 @@ func _build_hud() -> void:
     progress_bar.add_theme_stylebox_override("fill", _bar_style(Color(0.06, 0.78, 1.0, 1.0)))
     progress_box.add_child(progress_bar)
 
-    var nitro_panel := PanelContainer.new()
-    nitro_panel.position = Vector2(445.0, 97.0)
-    nitro_panel.size = Vector2(365.0, 47.0)
-    nitro_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.032, 0.06, 0.74), Color(0.18, 0.68, 0.95, 0.58), 13))
-    overlay.add_child(nitro_panel)
-    var nitro_box := VBoxContainer.new()
-    nitro_box.add_theme_constant_override("separation", 1)
-    nitro_panel.add_child(nitro_box)
-    var nitro_title := Label.new()
-    nitro_title.text = "NITRO"
-    nitro_title.add_theme_font_size_override("font_size", 12)
-    nitro_title.add_theme_color_override("font_color", Color(0.47, 0.87, 1.0))
-    nitro_box.add_child(nitro_title)
-    nitro_bar = ProgressBar.new()
-    nitro_bar.show_percentage = false
-    nitro_bar.max_value = 100.0
-    nitro_bar.value = 100.0
-    nitro_bar.custom_minimum_size = Vector2(330.0, 14.0)
-    nitro_bar.add_theme_stylebox_override("background", _bar_style(Color(0.06, 0.10, 0.15, 1.0)))
-    nitro_bar.add_theme_stylebox_override("fill", _bar_style(Color(0.0, 0.75, 1.0, 1.0)))
-    nitro_box.add_child(nitro_bar)
-
     var left := _make_button(overlay, "◀", Vector2(25.0, 566.0), Vector2(100.0, 120.0), 34)
     left.button_down.connect(_on_left_button_down)
     left.button_up.connect(_on_left_button_up)
@@ -1298,9 +1153,9 @@ func _build_hud() -> void:
     var brake := _make_button(overlay, "BRAKE", Vector2(1000.0, 585.0), Vector2(115.0, 88.0), 17)
     brake.button_down.connect(func(): brake_touch = true)
     brake.button_up.connect(func(): brake_touch = false)
-    boost_button = _make_button(overlay, "NITRO  ▶", Vector2(1122.0, 565.0), Vector2(136.0, 108.0), 19)
-    boost_button.button_down.connect(func(): boost_touch = true)
-    boost_button.button_up.connect(func(): boost_touch = false)
+    throttle_button = _make_button(overlay, "THROTTLE  ▲", Vector2(1122.0, 565.0), Vector2(136.0, 108.0), 18)
+    throttle_button.button_down.connect(func(): throttle_touch = true)
+    throttle_button.button_up.connect(func(): throttle_touch = false)
     var restart := _make_button(overlay, "RESTART", Vector2(870.0, 650.0), Vector2(140.0, 45.0), 15)
     restart.pressed.connect(_restart_race)
     var garage := _make_button(overlay, "GARAGE  •  C", Vector2(1018.0, 650.0), Vector2(239.0, 45.0), 15)
@@ -1359,35 +1214,25 @@ func _change_route(direction: int) -> void:
 
 
 func _restart_race(show_message := true) -> void:
-    # Restore pickups as well as counters. Otherwise restart would show a zero
-    # coin score while every previously collected coin remained invisible.
-    for item in coin_nodes:
-        item["taken"] = false
-        var coin_root := item["root"] as Node3D
-        if is_instance_valid(coin_root):
-            coin_root.visible = true
-    for obstacle in obstacle_nodes:
-        obstacle["distance"] = float(obstacle.get("original_distance", obstacle["distance"]))
-        var obstacle_root := obstacle["root"] as Node3D
-        if is_instance_valid(obstacle_root):
-            obstacle_root.visible = true
-
     travel_distance = 0.0
     lateral_offset = 0.0
     current_speed = 0.0
     elapsed_time = 0.0
-    coins_collected = 0
     race_over = false
-    start_countdown = 3.0
+    start_countdown = 0.0
+    drive_started = false
     _release_touch_controls()
-    next_checkpoint = 0
-    nitro_bar.value = 100.0
+    vehicle_heading = atan2(_forward_at(0.0).x, -_forward_at(0.0).z)
+    current_gear = 1
+    engine_rpm = 900.0
+    for item in traffic_nodes:
+        item["distance"] = float(item["original_distance"])
+        item["previous_distance"] = float(item["original_distance"])
+        _place_traffic_item(item)
     if show_message:
-        message_label.text = "GET READY"
+        message_label.text = "READY TO DRIVE"
     _place_player_and_camera(1.0)
     _refresh_hud()
-
-
 
 func _load_records() -> void:
     var config := ConfigFile.new()
@@ -1408,13 +1253,7 @@ func _save_records() -> void:
         push_warning("Could not save personal-best times: " + error_string(err))
 
 
-func _score() -> int:
-    return int(travel_distance * 2.0) + coins_collected * COIN_SCORE
-
-
 func _format_time(seconds: float) -> String:
-    # Format rounded centiseconds as integer fields so 59.999 seconds rolls over
-    # to 01:00.00 instead of displaying the impossible 00:60.00.
     var total_centiseconds := maxi(0, int(round(seconds * 100.0)))
     var minutes := int(total_centiseconds / 6000)
     var whole_seconds := int((total_centiseconds / 100) % 60)
@@ -1425,11 +1264,12 @@ func _format_time(seconds: float) -> String:
 func _refresh_hud() -> void:
     if not is_instance_valid(score_label):
         return
-    score_label.text = "SCORE  %07d" % _score()
-    speed_label.text = "SPEED  %03d km/h" % int(current_speed * 3.6)
-    time_label.text = "TIME  %s    COINS  %03d" % [_format_time(elapsed_time), coins_collected]
+    var speed_kmh := current_speed * 3.6
+    current_gear = 1 if speed_kmh < 35.0 else (2 if speed_kmh < 65.0 else (3 if speed_kmh < 100.0 else (4 if speed_kmh < 135.0 else (5 if speed_kmh < 170.0 else 6))))
+    engine_rpm = clampf(900.0 + speed_kmh * 31.0 + (1100.0 if throttle_touch else 0.0), 900.0, 7600.0)
+    score_label.text = "GEAR  %d    RPM  %04d" % [current_gear, int(engine_rpm)]
+    speed_label.text = "SPEED  %03d km/h" % int(speed_kmh)
+    time_label.text = "TIME  %s    TRIP  %.2f km" % [_format_time(elapsed_time), travel_distance / 1000.0]
     var saved_best := float(best_times.get(String(ROUTES[route_index]["name"]), 0.0))
     best_time_label.text = "BEST  %s" % (_format_time(saved_best) if saved_best > 0.0 else "--:--.--")
     progress_bar.value = clampf(travel_distance / maxf(route_length, 1.0) * 100.0, 0.0, 100.0)
-    if is_instance_valid(boost_button):
-        boost_button.disabled = nitro_bar.value <= 0.0
