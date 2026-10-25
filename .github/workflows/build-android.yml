@@ -78,8 +78,8 @@ jobs:
           set -euo pipefail
           "$GODOT_BIN" --headless --editor --path mobile-racer --import
           AUDIT_LOG="$RUNNER_TEMP/godot-audit.log"
-          "$GODOT_BIN" --headless --path mobile-racer --rendering-method gl_compatibility --script res://tests/audit_smoke.gd --log-file "$AUDIT_LOG"
-          cat "$AUDIT_LOG"
+          set -o pipefail
+          "$GODOT_BIN" --headless --path mobile-racer --rendering-method gl_compatibility --script res://tests/audit_smoke.gd 2>&1 | tee "$AUDIT_LOG"
           if grep -Eq 'SCRIPT ERROR|Parse Error|AUDIT_TEST_FAIL|ERROR:' "$AUDIT_LOG"; then
             echo "Godot audit log contains errors."
             exit 1
