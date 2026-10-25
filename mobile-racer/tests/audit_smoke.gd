@@ -62,10 +62,11 @@ func _run_audit() -> void:
     game.set("travel_distance", 0.0)
     game.set("lateral_offset", 0.0)
     game.set("current_speed", 47.0)
-    game.set("nitro_bar.value", 0.0)
+    var nitro_bar := game.get("nitro_bar") as ProgressBar
+    if nitro_bar != null:
+        nitro_bar.value = 0.0
     game.set("boost_touch", true)
     game.call("_process", 0.05)
-    var nitro_bar := game.get("nitro_bar") as ProgressBar
     _expect(nitro_bar != null and is_zero_approx(nitro_bar.value), "held empty nitro does not auto-recharge")
     game.call("_restart_race", false)
     game.call("_on_left_button_down")
