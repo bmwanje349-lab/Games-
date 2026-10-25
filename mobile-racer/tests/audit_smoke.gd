@@ -111,10 +111,28 @@ func _run_audit() -> void:
     if not target_coin.is_empty():
         var coin_distance := float(target_coin["distance"])
         var coin_lane := float(target_coin["lane"])
+
+        # Before crossing a coin, it must remain available and must not award score.
+        game.set("travel_distance", coin_distance - 10.0)
+        game.set("lateral_offset", coin_lane)
+        game.call("_check_pickups_and_collisions", coin_distance - 20.0, coin_lane)
+        _expect(int(game.get("coins_collected")) == 0, "missed/unreached coin does not award score")
+        _expect(not bool(target_coin["taken"]), "unreached coin remains available")
+
+        # Cross it between two samples at the correct lane; it should collect once.
         game.set("travel_distance", coin_distance + 0.5)
         game.set("lateral_offset", coin_lane)
         game.call("_check_pickups_and_collisions", coin_distance - 1.0, coin_lane)
         _expect(int(game.get("coins_collected")) == 1, "swept pickup collection works")
+        _expect(bool(target_coin["taken"]), "collected coin cannot be awarded twice")
+
+        # A pass through the distance window in a different lane must not collect it.
+        game.call("_restart_race", false)
+        var wrong_lane := clampf(coin_lane + 4.0, -5.0, 5.0)
+        game.set("travel_distance", coin_distance + 0.5)
+        game.set("lateral_offset", wrong_lane)
+        game.call("_check_pickups_and_collisions", coin_distance - 1.0, wrong_lane)
+        _expect(int(game.get("coins_collected")) == 0, "wrong-lane coin does not award score")
 
     # An obstacle impact must end the race and keep the crash message.
     game.call("_restart_race", false)
