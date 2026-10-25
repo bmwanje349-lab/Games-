@@ -2,10 +2,8 @@ extends SceneTree
 
 var failures: Array[String] = []
 
-
 func _initialize() -> void:
     call_deferred("_run_audit")
-
 
 func _expect(condition: bool, detail: String) -> void:
     if condition:
@@ -14,14 +12,12 @@ func _expect(condition: bool, detail: String) -> void:
         failures.append(detail)
         push_error("AUDIT_TEST_FAIL: " + detail)
 
-
 func _run_audit() -> void:
     var packed := load("res://scenes/main.tscn") as PackedScene
     _expect(packed != null, "main scene loads")
     if packed == null:
         quit(1)
         return
-
     var game := packed.instantiate()
     game.process_mode = Node.PROCESS_MODE_DISABLED
     root.add_child(game)
@@ -30,188 +26,138 @@ func _run_audit() -> void:
     var player := game.get("player_root") as Node3D
     var camera := game.get("chase_camera") as Camera3D
     var course := game.get("course_root") as Node3D
-    _expect(is_instance_valid(player), "player root created")
+    _expect(is_instance_valid(player), "player node created")
     _expect(is_instance_valid(camera), "chase camera created")
-    _expect(course != null and course.has_node("MainRoadSurface"), "initial course has road surface")
-    if not is_instance_valid(player) or not is_instance_valid(camera) or course == null:
-        print("AUDIT_TEST_RESULT: startup failed before game state was created")
-        quit(1)
-        return
-
-    var initial_coins = game.get("coin_nodes")
-    var initial_obstacles = game.get("obstacle_nodes")
-    _expect(initial_coins is Array and initial_coins.size() > 20, "coin pickups generated")
-    _expect(initial_obstacles is Array and initial_obstacles.size() > 10, "traffic and obstacles generated")
-    if not initial_coins is Array or not initial_obstacles is Array:
+    _expect(course != null and course.has_node("PBRAsphaltRoad"), "PBR road created")
+    _expect(course != null and course.has_node("ContouredPBRLandscape"), "contoured terrain created")
+    _expect(course != null and course.has_node("InstancedTreeTrunks"), "3D trees created")
+    if course == null or not is_instance_valid(player) or not is_instance_valid(camera):
         print("AUDIT_TEST_RESULT: %d failure(s)" % failures.size())
         quit(1)
         return
+
+    for texture_path in [
+        "res://assets/environment/asphalt_03_diff_1k.jpg",
+        "res://assets/environment/asphalt_03_nor_gl_1k.jpg",
+        "res://assets/environment/asphalt_03_rough_1k.jpg",
+        "res://assets/environment/gravel_road_diff_1k.jpg",
+        "res://assets/environment/forrest_ground_01_diff_1k.jpg"
+    ]:
+        _expect(ResourceLoader.exists(texture_path), "PBR asset exists: " + texture_path)
+    var road := course.get_node("PBRAsphaltRoad") as MeshInstance3D
+    var road_material := road.material_override as StandardMaterial3D
+    _expect(road_material.albedo_texture != null, "road uses diffuse texture")
+    _expect(road_material.normal_enabled and road_material.normal_texture != null, "road uses normal map")
+
+    var traffic = game.get("traffic_nodes")
+    _expect(traffic is Array and traffic.size() >= 10, "moving traffic generated")
+
     game.call("_on_left_button_down")
     _expect(is_equal_approx(float(game.get("steering_touch")), -1.0), "left touch steers left")
     game.call("_on_right_button_down")
-    _expect(is_equal_approx(float(game.get("steering_touch")), 0.0), "opposing touches cancel")
+    _expect(is_zero_approx(float(game.get("steering_touch"))), "opposing touch inputs cancel")
     game.call("_on_left_button_up")
-    _expect(is_equal_approx(float(game.get("steering_touch")), 1.0), "releasing one touch keeps other steering held")
+    _expect(is_equal_approx(float(game.get("steering_touch")), 1.0), "other steering touch remains held")
     game.set("brake_touch", true)
-    game.set("boost_touch", true)
+    game.set("throttle_touch", true)
     game.call("_notification", Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
-    _expect(is_equal_approx(float(game.get("steering_touch")), 0.0) and not bool(game.get("brake_touch")) and not bool(game.get("boost_touch")), "focus loss releases held controls")
+    _expect(is_zero_approx(float(game.get("steering_touch"))) and not game.get("brake_touch") and not game.get("throttle_touch"), "focus loss releases controls")
 
-    # Empty nitro must not charge while the boost control remains requested.
-    game.set("start_countdown", 0.0)
-    game.set("travel_distance", 0.0)
-    game.set("lateral_offset", 0.0)
-    game.set("current_speed", 47.0)
-    var nitro_bar := game.get("nitro_bar") as ProgressBar
-    if nitro_bar != null:
-        nitro_bar.value = 0.0
-    game.set("boost_touch", true)
+    game.call("_restart_race", false)
+    game.set("travel_distance", 5.0)
+    game.set("throttle_touch", true)
     game.call("_process", 0.05)
-    _expect(nitro_bar != null and is_zero_approx(nitro_bar.value), "held empty nitro does not auto-recharge")
-    game.call("_restart_race", false)
-    game.call("_on_left_button_down")
-    game.set("brake_touch", true)
-    game.set("boost_touch", true)
-    game.call("_restart_race", false)
-    _expect(not bool(game.get("steering_left_held")) and not bool(game.get("steering_right_held")) and is_zero_approx(float(game.get("steering_touch"))) and not bool(game.get("brake_touch")) and not bool(game.get("boost_touch")), "restart releases all held controls")
-    # ResourceLoader must resolve imported GLB paths; exported APKs contain
-    # generated scenes rather than the original source GLB files.
-    for car_path in [
-        "res://assets/cars/zenith_x1.glb",
-        "res://assets/cars/apex_v12r.glb",
-        "res://assets/cars/titan_gt.glb",
-        "res://assets/cars/rallyfox_x.glb",
-        "res://assets/cars/volt_e_rs.glb",
-        "res://assets/cars/phantom_blackline.glb",
-        "res://assets/cars/tempest_roadster.glb",
-        "res://assets/cars/monarch_svr.glb",
-        "res://assets/cars/viper_street_rs.glb",
-    ]:
-        _expect(ResourceLoader.exists(car_path), "imported car resource resolves: " + car_path)
-    _expect(String(game.call("_format_time", 59.999)) == "01:00.00", "timer rounds across minute boundary")
-    _expect(String(game.call("_format_time", 0.0)) == "00:00.00", "timer formats zero correctly")
+    _expect(float(game.get("current_speed")) > 0.0, "throttle accelerates")
+    _expect(bool(game.get("drive_started")), "driving starts timer")
+    var speed_after_throttle := float(game.get("current_speed"))
+    game.set("throttle_touch", false)
+    game.call("_process", 0.05)
+    _expect(float(game.get("current_speed")) < speed_after_throttle, "released throttle applies drag")
+    game.set("current_speed", 22.0)
+    game.set("steering_touch", 1.0)
+    var old_heading := float(game.get("vehicle_heading"))
+    game.call("_process", 0.05)
+    _expect(absf(wrapf(float(game.get("vehicle_heading")) - old_heading, -PI, PI)) > 0.001, "steering changes vehicle heading")
 
-    # Cycle every model through the real garage loader. The audit is intended to
-    # catch missing/broken imported scenes rather than merely count the manifest.
+    var car_paths := [
+        "res://assets/cars/zenith_x1.glb", "res://assets/cars/apex_v12r.glb",
+        "res://assets/cars/titan_gt.glb", "res://assets/cars/rallyfox_x.glb",
+        "res://assets/cars/volt_e_rs.glb", "res://assets/cars/phantom_blackline.glb",
+        "res://assets/cars/tempest_roadster.glb", "res://assets/cars/monarch_svr.glb",
+        "res://assets/cars/viper_street_rs.glb"
+    ]
+    for car_path in car_paths:
+        _expect(ResourceLoader.exists(car_path), "car resource resolves: " + car_path)
     for i in range(9):
         game.call("_change_car", 1)
         await process_frame
         var car := game.get("car_visual") as Node3D
-        var car_label := game.get("car_label") as Label
-        _expect(is_instance_valid(car), "garage model %d instantiates" % (i + 1))
-        _expect(car_label != null and car_label.text.find("fallback model") == -1,
-            "garage model %d loads without fallback" % (i + 1))
+        var label := game.get("car_label") as Label
+        _expect(is_instance_valid(car), "garage car %d instantiates" % (i + 1))
+        _expect(label != null and label.text.find("fallback model") == -1, "garage car %d uses real model" % (i + 1))
+        if is_instance_valid(car):
+            var points: Array = []
+            game.call("_collect_bounds", car, Transform3D.IDENTITY, points)
+            var lowest := INF
+            for point in points:
+                lowest = minf(lowest, (point as Vector3).y)
+            _expect(not points.is_empty() and lowest >= -0.003 and lowest <= 0.025, "garage car %d tyre/body bounds meet road plane" % (i + 1))
 
-    # Exercise route teardown/rebuild and confirm all three routes are selectable.
-    var seen_routes: Dictionary = {}
+    var routes_seen: Dictionary = {}
     for i in range(3):
         var old_course := game.get("course_root") as Node3D
         game.call("_change_route", 1)
         await process_frame
         course = game.get("course_root") as Node3D
-        _expect(course != null and course.has_node("MainRoadSurface"), "route %d builds" % (i + 1))
-        _expect(not is_instance_valid(old_course), "route %d releases previous course" % (i + 1))
+        _expect(course != null and course.has_node("PBRAsphaltRoad"), "route %d rebuilds road" % (i + 1))
+        _expect(course != null and course.has_node("ContouredPBRLandscape"), "route %d rebuilds terrain" % (i + 1))
+        _expect(not is_instance_valid(old_course), "route %d releases old course" % (i + 1))
         var route_label := game.get("route_label") as Label
         if route_label != null:
-            seen_routes[route_label.text] = true
-    _expect(seen_routes.size() == 3, "all three routes are reachable")
+            routes_seen[route_label.text] = true
+        var route_traffic = game.get("traffic_nodes")
+        _expect(route_traffic is Array and route_traffic.size() >= 10, "route %d creates traffic" % (i + 1))
+    _expect(routes_seen.size() == 3, "all three courses are selectable")
 
-    # Test that pickup collection follows a short segment rather than requiring a
-    # single frame to land exactly on the pickup coordinate.
+    game.set("throttle_touch", true)
+    game.set("brake_touch", true)
+    game.set("current_speed", 24.0)
     game.call("_restart_race", false)
-    var coins = game.get("coin_nodes")
-    var target_coin: Dictionary = {}
-    for coin in coins:
-        if not coin["taken"]:
-            target_coin = coin
-            break
-    _expect(not target_coin.is_empty(), "a test coin is available")
-    if not target_coin.is_empty():
-        var coin_distance := float(target_coin["distance"])
-        var coin_lane := float(target_coin["lane"])
+    _expect(is_zero_approx(float(game.get("current_speed"))), "restart stops vehicle")
+    _expect(not game.get("throttle_touch") and not game.get("brake_touch"), "restart releases pedals")
+    var reset_traffic = game.get("traffic_nodes")
+    var traffic_reset_ok := true
+    for item in reset_traffic:
+        if not is_equal_approx(float(item["distance"]), float(item["original_distance"])):
+            traffic_reset_ok = false
+    _expect(traffic_reset_ok, "restart restores traffic positions")
 
-        # Before crossing a coin, it must remain available and must not award score.
-        game.set("travel_distance", coin_distance - 10.0)
-        game.set("lateral_offset", coin_lane)
-        game.call("_check_pickups_and_collisions", coin_distance - 20.0, coin_lane)
-        _expect(int(game.get("coins_collected")) == 0, "missed/unreached coin does not award score")
-        _expect(not bool(target_coin["taken"]), "unreached coin remains available")
+    if reset_traffic.size() > 0:
+        var first: Dictionary = reset_traffic[0]
+        var d := float(first["original_distance"])
+        var lane := float(first["lane"])
+        game.set("travel_distance", d)
+        game.set("lateral_offset", lane)
+        first["previous_distance"] = d + 5.0
+        first["distance"] = d - 1.0
+        game.call("_check_traffic_collisions", d - 5.0, lane)
+        _expect(bool(game.get("race_over")), "traffic collision ends drive")
+        var collision_label := game.get("message_label") as Label
+        _expect(collision_label != null and collision_label.text.begins_with("COLLISION"), "collision message is displayed")
 
-        # Cross it between two samples at the correct lane; it should collect once.
-        game.set("travel_distance", coin_distance + 0.5)
-        game.set("lateral_offset", coin_lane)
-        game.call("_check_pickups_and_collisions", coin_distance - 1.0, coin_lane)
-        _expect(int(game.get("coins_collected")) == 1, "swept pickup collection works")
-        _expect(bool(target_coin["taken"]), "collected coin cannot be awarded twice")
-
-        # A pass through the distance window in a different lane must not collect it.
-        game.call("_restart_race", false)
-        var wrong_lane := clampf(coin_lane + 4.0, -5.0, 5.0)
-        game.set("travel_distance", coin_distance + 0.5)
-        game.set("lateral_offset", wrong_lane)
-        game.call("_check_pickups_and_collisions", coin_distance - 1.0, wrong_lane)
-        _expect(int(game.get("coins_collected")) == 0, "wrong-lane coin does not award score")
-
-    # An obstacle impact must end the race and keep the crash message.
     game.call("_restart_race", false)
-    _expect(int(game.get("coins_collected")) == 0, "restart resets coin score")
-    if not target_coin.is_empty():
-        _expect(not bool(target_coin["taken"]), "restart makes collected coin available again")
-        var reset_coin_root := target_coin["root"] as Node3D
-        _expect(is_instance_valid(reset_coin_root) and reset_coin_root.visible, "restart makes collected coin visible again")
-
-    var obstacles = game.get("obstacle_nodes")
-    var target_boost: Dictionary = {}
-    for obstacle in obstacles:
-        if obstacle["kind"] == "boost":
-            target_boost = obstacle
-            break
-    _expect(not target_boost.is_empty(), "a test boost pad is available")
-    if not target_boost.is_empty():
-        var boost_distance := float(target_boost["original_distance"])
-        var boost_lane := float(target_boost["lane"])
-        game.set("travel_distance", boost_distance)
-        game.set("lateral_offset", boost_lane)
-        game.call("_check_pickups_and_collisions", boost_distance - 1.0, boost_lane)
-        _expect(float(target_boost["distance"]) < 0.0, "boost pad is consumed on pickup")
-        var boost_root := target_boost["root"] as Node3D
-        _expect(is_instance_valid(boost_root) and not boost_root.visible, "used boost pad hides")
-        game.call("_restart_race", false)
-        _expect(is_equal_approx(float(target_boost["distance"]), boost_distance), "restart restores boost distance")
-        _expect(is_instance_valid(boost_root) and boost_root.visible, "restart restores boost pad visibility")
-
-    var target_obstacle: Dictionary = {}
-    for obstacle in obstacles:
-        if obstacle["kind"] != "boost":
-            target_obstacle = obstacle
-            break
-    _expect(not target_obstacle.is_empty(), "a test obstacle is available")
-    if not target_obstacle.is_empty():
-        var obstacle_distance := float(target_obstacle["distance"])
-        var obstacle_lane := float(target_obstacle["lane"])
-        game.set("travel_distance", obstacle_distance - 10.0)
-        game.set("lateral_offset", obstacle_lane)
-        game.call("_check_pickups_and_collisions", obstacle_distance - 20.0, obstacle_lane)
-        _expect(not bool(game.get("race_over")), "unreached obstacle does not cause a crash")
-
-        game.set("travel_distance", obstacle_distance)
-        game.set("lateral_offset", obstacle_lane)
-        game.call("_check_pickups_and_collisions", obstacle_distance - 1.0, obstacle_lane)
-        var crash_label := game.get("message_label") as Label
-        _expect(bool(game.get("race_over")), "obstacle impact ends race")
-        _expect(crash_label != null and crash_label.text.begins_with("CRASH"), "crash state is not overwritten")
-
-    # Verify a clean restart and finish path.
-    game.call("_restart_race", false)
-    _expect(not bool(game.get("race_over")), "restart clears terminal state")
-    game.set("start_countdown", 0.0)
-    game.set("travel_distance", float(game.get("route_length")) - 1.0)
-    game.set("current_speed", 47.0)
+    var finish_distance := float(game.get("route_length")) - 1.0
+    var tangent: Vector3 = game.call("_forward_at", finish_distance)
+    game.set("travel_distance", finish_distance)
+    game.set("vehicle_heading", atan2(tangent.x, -tangent.z))
+    game.set("current_speed", 32.0)
+    game.set("drive_started", true)
     game.call("_process", 0.05)
+    _expect(bool(game.get("race_over")), "finish line ends drive")
     var finish_label := game.get("message_label") as Label
-    _expect(bool(game.get("race_over")), "crossing the finish ends the race")
-    _expect(finish_label != null and (finish_label.text.begins_with("FINISH") or finish_label.text.begins_with("NEW PERSONAL BEST")),
-        "finish state is displayed")
+    _expect(finish_label != null and finish_label.text.begins_with("STAGE COMPLETE"), "stage completion is displayed")
+    _expect(String(game.call("_format_time", 59.999)) == "01:00.00", "timer rounds at minute boundary")
+    _expect(String(game.call("_format_time", 0.0)) == "00:00.00", "timer formats zero")
 
     print("AUDIT_TEST_RESULT: %d failure(s)" % failures.size())
     quit(1 if not failures.is_empty() else 0)
