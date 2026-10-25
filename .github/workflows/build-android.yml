@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mobile-racer-android-main
+  group: mobile-racer-android-asphalt-road-quality
   cancel-in-progress: true
 
 jobs:
