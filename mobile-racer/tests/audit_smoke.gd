@@ -29,6 +29,10 @@ func _run_audit() -> void:
     _expect(is_instance_valid(player), "player node created")
     _expect(is_equal_approx(float(game.get("lateral_offset")), -2.35), "player starts inside a lane, not on the double-yellow centre line")
     _expect(is_instance_valid(camera), "chase camera created")
+    if is_instance_valid(camera):
+        _expect(camera.global_position.y >= player.global_position.y + 5.5, "raised chase camera can see the road surface ahead")
+    var world_env := game.get("world_environment") as WorldEnvironment
+    _expect(world_env != null and world_env.environment.ambient_light_source == Environment.AMBIENT_SOURCE_COLOR, "neutral ambient lighting prevents blue sky tint on asphalt")
     _expect(course != null and course.has_node("PBRAsphaltRoad"), "PBR road created")
     _expect(course != null and course.has_node("ContouredPBRLandscape"), "contoured terrain created")
     var landscape := course.get_node("ContouredPBRLandscape") as MeshInstance3D
@@ -56,6 +60,7 @@ func _run_audit() -> void:
     _expect(road_material.albedo_texture != null, "road uses diffuse texture")
     _expect(road_material.normal_enabled and road_material.normal_texture != null, "road uses normal map")
     _expect(road_material.albedo_texture.resource_path.find("asphalt_track_diff_1k.jpg") != -1, "road uses race-track tarmac PBR texture")
+    _expect(road_material.roughness >= 0.95 and is_zero_approx(road_material.metallic), "asphalt is dark, non-metallic, rough road material")
     var road_arrays: Array = (road.mesh as ArrayMesh).surface_get_arrays(0)
     var road_vertices: PackedVector3Array = road_arrays[Mesh.ARRAY_VERTEX]
     _expect(road_vertices.size() >= int(float(game.get("route_length"))), "road curve is sampled finely for smoother bends")
