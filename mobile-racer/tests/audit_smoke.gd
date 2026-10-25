@@ -30,6 +30,10 @@ func _run_audit() -> void:
     _expect(is_instance_valid(camera), "chase camera created")
     _expect(course != null and course.has_node("PBRAsphaltRoad"), "PBR road created")
     _expect(course != null and course.has_node("ContouredPBRLandscape"), "contoured terrain created")
+    var landscape := course.get_node("ContouredPBRLandscape") as MeshInstance3D
+    var landscape_arrays: Array = (landscape.mesh as ArrayMesh).surface_get_arrays(0)
+    var landscape_vertices: PackedVector3Array = landscape_arrays[Mesh.ARRAY_VERTEX]
+    _expect(landscape_vertices.size() >= 60000, "terrain mesh follows road contours at 4 m samples")
     _expect(course != null and course.has_node("InstancedTreeTrunks"), "3D trees created")
     _expect(course != null and course.has_node("LeftGravelShoulder") and course.has_node("RightGravelShoulder"), "separate gravel shoulders flank the road")
     _expect(course != null and course.has_node("UpperCrashBarrierRails") and course.has_node("LowerCrashBarrierRails") and course.has_node("CrashBarrierPosts"), "upright 3D crash barrier rails and posts created")
