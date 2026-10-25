@@ -451,11 +451,10 @@ func _make_pbr_material(texture_set: String, tint: Color, uv_scale := Vector3.ON
     return material
 
 
-func _make_asphalt_material(route: Dictionary) -> Material:
-    var tint := Color(0.91, 0.92, 0.94)
-    if route["kind"] == "city":
-        tint = Color(0.72, 0.78, 0.92)
-    return _make_pbr_material("asphalt_track", tint)
+func _make_asphalt_material(_route: Dictionary) -> Material:
+    # Keep the pavement neutral asphalt gray in every environment. The night
+    # lighting should color the scene, not turn the actual road surface blue.
+    return _make_pbr_material("asphalt_track", Color(0.92, 0.93, 0.94))
 
 
 func _build_route_surface() -> void:
