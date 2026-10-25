@@ -146,14 +146,18 @@ func _process(delta: float) -> void:
     steer = clampf(steer, -1.0, 1.0)
 
     var braking := brake_touch or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
-    var boosting := (boost_touch or Input.is_key_pressed(KEY_SPACE)) and not braking
+    var boost_requested := (boost_touch or Input.is_key_pressed(KEY_SPACE)) and not braking
+    var boosting := boost_requested and nitro_bar.value > 0.0
     var target_speed := CRUISE_SPEED
     if braking:
         target_speed = BRAKE_SPEED
-    elif boosting and nitro_bar.value > 0.0:
+    elif boosting:
         target_speed = BOOST_SPEED
         nitro_bar.value = maxf(0.0, nitro_bar.value - 28.0 * delta)
-    else:
+        if nitro_bar.value <= 0.0:
+            # Do not leave a held touch registered when the button disables.
+            boost_touch = false
+    elif not boost_requested:
         nitro_bar.value = minf(100.0, nitro_bar.value + 8.5 * delta)
 
     current_speed = move_toward(current_speed, target_speed, (48.0 if boosting else 37.0) * delta)
@@ -1375,9 +1379,7 @@ func _restart_race(show_message := true) -> void:
     coins_collected = 0
     race_over = false
     start_countdown = 3.0
-    steering_touch = 0.0
-    brake_touch = false
-    boost_touch = false
+    _release_touch_controls()
     next_checkpoint = 0
     nitro_bar.value = 100.0
     if show_message:
