@@ -31,15 +31,17 @@ func _run_audit() -> void:
     _expect(course != null and course.has_node("PBRAsphaltRoad"), "PBR road created")
     _expect(course != null and course.has_node("ContouredPBRLandscape"), "contoured terrain created")
     _expect(course != null and course.has_node("InstancedTreeTrunks"), "3D trees created")
+    _expect(course != null and course.has_node("LeftGravelShoulder") and course.has_node("RightGravelShoulder"), "separate gravel shoulders flank the road")
+    _expect(course != null and course.has_node("UpperCrashBarrierRails") and course.has_node("LowerCrashBarrierRails") and course.has_node("CrashBarrierPosts"), "upright 3D crash barrier rails and posts created")
     if course == null or not is_instance_valid(player) or not is_instance_valid(camera):
         print("AUDIT_TEST_RESULT: %d failure(s)" % failures.size())
         quit(1)
         return
 
     for texture_path in [
-        "res://assets/environment/asphalt_03_diff_1k.jpg",
-        "res://assets/environment/asphalt_03_nor_gl_1k.jpg",
-        "res://assets/environment/asphalt_03_rough_1k.jpg",
+        "res://assets/environment/asphalt_track_diff_1k.jpg",
+        "res://assets/environment/asphalt_track_nor_gl_1k.jpg",
+        "res://assets/environment/asphalt_track_rough_1k.jpg",
         "res://assets/environment/gravel_road_diff_1k.jpg",
         "res://assets/environment/forrest_ground_01_diff_1k.jpg"
     ]:
@@ -48,6 +50,12 @@ func _run_audit() -> void:
     var road_material := road.material_override as StandardMaterial3D
     _expect(road_material.albedo_texture != null, "road uses diffuse texture")
     _expect(road_material.normal_enabled and road_material.normal_texture != null, "road uses normal map")
+    _expect(road_material.albedo_texture.resource_path.find("asphalt_track_diff_1k.jpg") != -1, "road uses race-track tarmac PBR texture")
+    var road_arrays: Array = (road.mesh as ArrayMesh).surface_get_arrays(0)
+    var road_vertices: PackedVector3Array = road_arrays[Mesh.ARRAY_VERTEX]
+    _expect(road_vertices.size() >= int(float(game.get("route_length"))), "road curve is sampled finely for smoother bends")
+    var roadbed_offset := float(game.call("_terrain_height_offset", 0.0, 0.0, "coast"))
+    _expect(roadbed_offset >= -0.06 and roadbed_offset <= -0.02, "roadbed terrain sits within 6 cm of the pavement")
 
     var traffic = game.get("traffic_nodes")
     _expect(traffic is Array and traffic.size() >= 10, "moving traffic generated")
