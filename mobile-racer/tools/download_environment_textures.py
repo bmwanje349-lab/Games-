@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "assets" / "environment"
 BASE = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/{slug}/{filename}"
 MAPS = {
-    "asphalt_03_diff_1k.jpg": ("asphalt_03", "asphalt_03_diff_1k.jpg"),
-    "asphalt_03_nor_gl_1k.jpg": ("asphalt_03", "asphalt_03_nor_gl_1k.jpg"),
-    "asphalt_03_rough_1k.jpg": ("asphalt_03", "asphalt_03_rough_1k.jpg"),
+    "asphalt_track_diff_1k.jpg": ("asphalt_track", "asphalt_track_diff_1k.jpg"),
+    "asphalt_track_nor_gl_1k.jpg": ("asphalt_track", "asphalt_track_nor_gl_1k.jpg"),
+    "asphalt_track_rough_1k.jpg": ("asphalt_track", "asphalt_track_rough_1k.jpg"),
     "gravel_road_diff_1k.jpg": ("gravel_road", "gravel_road_diff_1k.jpg"),
     "gravel_road_nor_gl_1k.jpg": ("gravel_road", "gravel_road_nor_gl_1k.jpg"),
     "gravel_road_rough_1k.jpg": ("gravel_road", "gravel_road_rough_1k.jpg"),
