@@ -989,9 +989,12 @@ func _load_selected_car() -> void:
         car_visual = null
     var entry: Dictionary = CARS[car_index]
     var packed: PackedScene = null
-    if FileAccess.file_exists(String(entry["file"])):
-        # Do not permanently cache every car and its textures as players cycle the garage.
-        packed = ResourceLoader.load(String(entry["file"]), "PackedScene", ResourceLoader.CACHE_MODE_IGNORE_DEEP) as PackedScene
+    # Exported Godot packages remap imported .glb files to generated .scn
+    # resources and may omit the original GLB bytes. ResourceLoader resolves
+    # that remap; FileAccess.file_exists does not reliably do so.
+    # IGNORE_DEEP also avoids retaining all nine cars' textures in the global
+    # resource cache after players cycle through the garage.
+    packed = ResourceLoader.load(String(entry["file"]), "PackedScene", ResourceLoader.CACHE_MODE_IGNORE_DEEP) as PackedScene
     if packed == null:
         _make_fallback_car()
         car_label.text = "%s  •  fallback model" % entry["name"]
