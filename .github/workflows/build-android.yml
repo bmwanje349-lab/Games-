@@ -73,11 +73,18 @@ jobs:
           EOF
           "$GODOT_BIN" --version
 
-      - name: Import 3D models and check the project scene
+      - name: Import 3D models and run game audit smoke tests
         run: |
           set -euo pipefail
           "$GODOT_BIN" --headless --editor --path mobile-racer --import
-          "$GODOT_BIN" --headless --path mobile-racer --quit-after 8
+          AUDIT_LOG="$RUNNER_TEMP/godot-audit.log"
+          "$GODOT_BIN" --headless --path mobile-racer --rendering-method gl_compatibility --script res://tests/audit_smoke.gd --log-file "$AUDIT_LOG"
+          cat "$AUDIT_LOG"
+          if grep -Eq 'SCRIPT ERROR|Parse Error|AUDIT_TEST_FAIL|ERROR:' "$AUDIT_LOG"; then
+            echo "Godot audit log contains errors."
+            exit 1
+          fi
+          grep -q 'AUDIT_TEST_RESULT: 0 failure(s)' "$AUDIT_LOG"
 
       - name: Export debug APK for arm64 Android phones
         run: |
