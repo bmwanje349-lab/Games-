@@ -17,8 +17,8 @@ window/handheld/orientation=0
 
 [rendering]
 textures/vram_compression/import_etc2_astc=true
-renderer/rendering_method="mobile"
-renderer/rendering_method.mobile="mobile"
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
 textures/default_filters/use_nearest_mipmap_filter=false
 environment/defaults/default_clear_color=Color(0.36, 0.62, 0.88, 1)
 
