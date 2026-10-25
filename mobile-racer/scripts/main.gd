@@ -1102,13 +1102,16 @@ func _check_pickups_and_collisions(previous_distance: float = -1.0, previous_lan
             continue
         var item_distance := float(item["distance"])
         var item_lane := _lane_at_distance(item_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
+        # Ignore coins not crossed by this frame or outside the pickup lane.
+        # The inverse condition awarded coins when the car missed them.
         if not _crossed_distance(item_distance, previous_distance, travel_distance, 2.4) or absf(float(item["lane"]) - item_lane) >= 1.55:
-            item["taken"] = true
-            var coin_root: Node3D = item["root"]
-            if is_instance_valid(coin_root):
-                coin_root.visible = false
-            coins_collected += 1
-            score_label.text = "SCORE  %07d" % _score()
+            continue
+        item["taken"] = true
+        var coin_root: Node3D = item["root"]
+        if is_instance_valid(coin_root):
+            coin_root.visible = false
+        coins_collected += 1
+        score_label.text = "SCORE  %07d" % _score()
     for obstacle in obstacle_nodes:
         var obstacle_distance := float(obstacle["distance"])
         var obstacle_lane := _lane_at_distance(obstacle_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
