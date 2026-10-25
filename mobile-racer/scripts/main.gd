@@ -116,6 +116,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+    # A stalled or resumed frame must not jump the car past pickups, gates, or
+    # collisions. Cap simulation time and use swept-distance checks below.
+    delta = clampf(delta, 0.0, 0.05)
     if race_over:
         _refresh_hud()
         return
@@ -132,6 +135,7 @@ func _process(delta: float) -> void:
         return
 
     elapsed_time += delta
+    var previous_lateral_offset := lateral_offset
     var steer := steering_touch
     if Input.is_action_pressed("ui_left") or Input.is_key_pressed(KEY_A):
         steer -= 1.0
@@ -156,11 +160,17 @@ func _process(delta: float) -> void:
     if absf(steer) > 0.01:
         steering_mouse = false
 
+    var previous_distance := travel_distance
     travel_distance = minf(route_length, travel_distance + current_speed * delta)
     _place_player_and_camera(delta)
-    _check_pickups_and_collisions()
+    _check_pickups_and_collisions(previous_distance, previous_lateral_offset)
+    # A crash must end the frame before checkpoints or finish logic can overwrite
+    # the crash message or award a finish on the same frame.
+    if race_over:
+        _refresh_hud()
+        return
 
-    if next_checkpoint < checkpoint_distances.size() and travel_distance >= checkpoint_distances[next_checkpoint]:
+    while next_checkpoint < checkpoint_distances.size() and travel_distance >= checkpoint_distances[next_checkpoint]:
         next_checkpoint += 1
         message_label.text = "CHECKPOINT %d / %d" % [next_checkpoint, checkpoint_distances.size()]
     elif message_label.text.begins_with("CHECKPOINT") and next_checkpoint > 0:
@@ -198,6 +208,20 @@ func _configure_input() -> void:
     for action in ["ui_left", "ui_right"]:
         if not InputMap.has_action(action):
             InputMap.add_action(action)
+
+
+func _notification(what: int) -> void:
+    # Android can interrupt a touch without delivering Button.button_up. Clear
+    # held controls on app pause/focus loss so the car cannot keep steering or
+    # boosting when the player returns.
+    if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+        _release_touch_controls()
+
+
+func _release_touch_controls() -> void:
+    steering_touch = 0.0
+    brake_touch = false
+    boost_touch = false
 
 
 func _build_world() -> void:
@@ -930,8 +954,8 @@ func _place_player_and_camera(delta: float) -> void:
     player_root.position = point
     var forward := _forward_at(travel_distance)
     player_root.basis = Basis.looking_at(forward, Vector3.UP)
-    if is_instance_valid(car_visual):
-        car_visual.position.x = lateral_offset * 0.0
+    # Keep the imported model's normalization offset; resetting its X coordinate
+    # here mis-centres vehicles whose source pivot is not at the origin.
     var cam_target := point - forward * 9.4 + Vector3.UP * 4.3
     chase_camera.global_position = chase_camera.global_position.lerp(cam_target, clampf(delta * 4.2, 0.0, 1.0))
     var look_target := point + forward * 13.0 + Vector3.UP * 1.0
@@ -959,7 +983,9 @@ func _collect_bounds(node: Node, transform_to_root: Transform3D, points: Array) 
 
 func _load_selected_car() -> void:
     if is_instance_valid(car_visual):
-        car_visual.queue_free()
+        # Free immediately before loading the next model to avoid a one-frame
+        # overlap of two full-resolution car scenes on memory-constrained phones.
+        car_visual.free()
         car_visual = null
     var entry: Dictionary = CARS[car_index]
     var packed: PackedScene = null
@@ -967,12 +993,13 @@ func _load_selected_car() -> void:
         packed = load(entry["file"]) as PackedScene
     if packed == null:
         _make_fallback_car()
-        car_label.text = "%s  •  model unavailable" % entry["name"]
+        car_label.text = "%s  •  fallback model" % entry["name"]
         return
     var instance := packed.instantiate()
     if not instance is Node3D:
         instance.free()
         _make_fallback_car()
+        car_label.text = "%s  •  fallback model" % entry["name"]
         return
     car_visual = instance as Node3D
     player_root.add_child(car_visual)
@@ -1025,11 +1052,18 @@ func _make_fallback_car() -> void:
             car_visual.add_child(wheel)
 
 
-func _check_pickups_and_collisions() -> void:
+func _check_pickups_and_collisions(previous_distance: float = -1.0, previous_lane: float = INF) -> void:
+    if previous_distance < 0.0:
+        previous_distance = travel_distance
+    if is_inf(previous_lane):
+        previous_lane = lateral_offset
+
     for item in coin_nodes:
         if item["taken"]:
             continue
-        if absf(float(item["distance"]) - travel_distance) < 2.4 and absf(float(item["lane"]) - lateral_offset) < 1.55:
+        var item_distance := float(item["distance"])
+        var item_lane := _lane_at_distance(item_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
+        if not _crossed_distance(item_distance, previous_distance, travel_distance, 2.4) or absf(float(item["lane"]) - item_lane) >= 1.55:
             item["taken"] = true
             var coin_root: Node3D = item["root"]
             if is_instance_valid(coin_root):
@@ -1037,9 +1071,10 @@ func _check_pickups_and_collisions() -> void:
             coins_collected += 1
             score_label.text = "SCORE  %07d" % _score()
     for obstacle in obstacle_nodes:
-        var distance_gap := absf(float(obstacle["distance"]) - travel_distance)
-        var lane_gap := absf(float(obstacle["lane"]) - lateral_offset)
-        if distance_gap < 2.15 and lane_gap < 1.45:
+        var obstacle_distance := float(obstacle["distance"])
+        var obstacle_lane := _lane_at_distance(obstacle_distance, previous_distance, travel_distance, previous_lane, lateral_offset)
+        var lane_gap := absf(float(obstacle["lane"]) - obstacle_lane)
+        if _crossed_distance(obstacle_distance, previous_distance, travel_distance, 2.15) and lane_gap < 1.45:
             if obstacle["kind"] == "boost":
                 nitro_bar.value = minf(100.0, nitro_bar.value + 32.0)
                 obstacle["distance"] = -10000.0
@@ -1052,6 +1087,20 @@ func _check_pickups_and_collisions() -> void:
                 current_speed = 0.0
                 message_label.text = "CRASH!  •  TAP RESTART TO TRY AGAIN"
                 return
+
+
+func _crossed_distance(target: float, from_distance: float, to_distance: float, tolerance: float) -> bool:
+    var low := minf(from_distance, to_distance) - tolerance
+    var high := maxf(from_distance, to_distance) + tolerance
+    return target >= low and target <= high
+
+
+func _lane_at_distance(target_distance: float, from_distance: float, to_distance: float, from_lane: float, to_lane: float) -> float:
+    var span := to_distance - from_distance
+    if absf(span) < 0.0001:
+        return to_lane
+    var ratio := clampf((target_distance - from_distance) / span, 0.0, 1.0)
+    return lerpf(from_lane, to_lane, ratio)
 
 
 func _build_hud() -> void:
