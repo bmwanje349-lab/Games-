@@ -27,13 +27,25 @@ func _run_audit() -> void:
     root.add_child(game)
     await process_frame
 
-    _expect(is_instance_valid(game.get("player_root")), "player root created")
-    _expect(is_instance_valid(game.get("chase_camera")), "chase camera created")
-    _expect(is_instance_valid(game.get("course_root")), "initial course created")
+    var player := game.get("player_root") as Node3D
+    var camera := game.get("chase_camera") as Camera3D
     var course := game.get("course_root") as Node3D
+    _expect(is_instance_valid(player), "player root created")
+    _expect(is_instance_valid(camera), "chase camera created")
     _expect(course != null and course.has_node("MainRoadSurface"), "initial course has road surface")
-    _expect(game.get("coin_nodes").size() > 20, "coin pickups generated")
-    _expect(game.get("obstacle_nodes").size() > 10, "traffic and obstacles generated")
+    if not is_instance_valid(player) or not is_instance_valid(camera) or course == null:
+        print("AUDIT_TEST_RESULT: startup failed before game state was created")
+        quit(1)
+        return
+
+    var initial_coins = game.get("coin_nodes")
+    var initial_obstacles = game.get("obstacle_nodes")
+    _expect(initial_coins is Array and initial_coins.size() > 20, "coin pickups generated")
+    _expect(initial_obstacles is Array and initial_obstacles.size() > 10, "traffic and obstacles generated")
+    if not initial_coins is Array or not initial_obstacles is Array:
+        print("AUDIT_TEST_RESULT: %d failure(s)" % failures.size())
+        quit(1)
+        return
     game.call("_on_left_button_down")
     _expect(is_equal_approx(float(game.get("steering_touch")), -1.0), "left touch steers left")
     game.call("_on_right_button_down")
