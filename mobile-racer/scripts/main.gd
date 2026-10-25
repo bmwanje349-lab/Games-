@@ -875,7 +875,7 @@ func _create_traffic_car(distance: float, lane: float, seed_id: int) -> void:
             wheel.position = Vector3(x, 0.34, z)
             wheel.material_override = _mat(Color(0.018, 0.022, 0.028), 0.95)
             root.add_child(wheel)
-    obstacle_nodes.append({"root": root, "distance": distance, "lane": lane, "kind": "car"})
+    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "car"})
 
 
 func _create_barrier(distance: float, lane: float, seed_id: int) -> void:
@@ -886,7 +886,7 @@ func _create_barrier(distance: float, lane: float, seed_id: int) -> void:
     course_root.add_child(root)
     _add_box(root, Vector3(1.35, 0.76, 0.76), Vector3(0.0, 0.4, 0.0), _mat(Color(0.94, 0.24, 0.045), 0.58), "BarrierBody")
     _add_box(root, Vector3(1.38, 0.15, 0.79), Vector3(0.0, 0.57, 0.0), _mat(Color(0.96, 0.88, 0.69), 0.6), "ReflectiveBand")
-    obstacle_nodes.append({"root": root, "distance": distance, "lane": lane, "kind": "barrier"})
+    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "barrier"})
 
 
 func _create_boost_pad(distance: float, lane: float, seed_id: int) -> void:
@@ -897,7 +897,7 @@ func _create_boost_pad(distance: float, lane: float, seed_id: int) -> void:
     course_root.add_child(root)
     var pad_mat := _emissive_mat(Color(0.06, 0.80, 1.0), 1.4)
     _add_box(root, Vector3(1.65, 0.09, 3.5), Vector3.ZERO, pad_mat, "BoostPad")
-    obstacle_nodes.append({"root": root, "distance": distance, "lane": lane, "kind": "boost"})
+    obstacle_nodes.append({"root": root, "distance": distance, "original_distance": distance, "lane": lane, "kind": "boost"})
 
 
 func _build_race_gates() -> void:
@@ -990,7 +990,8 @@ func _load_selected_car() -> void:
     var entry: Dictionary = CARS[car_index]
     var packed: PackedScene = null
     if FileAccess.file_exists(String(entry["file"])):
-        packed = load(entry["file"]) as PackedScene
+        # Do not permanently cache every car and its textures as players cycle the garage.
+        packed = ResourceLoader.load(String(entry["file"]), "PackedScene", ResourceLoader.CACHE_MODE_IGNORE_DEEP) as PackedScene
     if packed == null:
         _make_fallback_car()
         car_label.text = "%s  •  fallback model" % entry["name"]
@@ -1313,6 +1314,19 @@ func _change_route(direction: int) -> void:
 
 
 func _restart_race(show_message := true) -> void:
+    # Restore pickups as well as counters. Otherwise restart would show a zero
+    # coin score while every previously collected coin remained invisible.
+    for item in coin_nodes:
+        item["taken"] = false
+        var coin_root := item["root"] as Node3D
+        if is_instance_valid(coin_root):
+            coin_root.visible = true
+    for obstacle in obstacle_nodes:
+        obstacle["distance"] = float(obstacle.get("original_distance", obstacle["distance"]))
+        var obstacle_root := obstacle["root"] as Node3D
+        if is_instance_valid(obstacle_root):
+            obstacle_root.visible = true
+
     travel_distance = 0.0
     lateral_offset = 0.0
     current_speed = 0.0
@@ -1356,9 +1370,13 @@ func _score() -> int:
 
 
 func _format_time(seconds: float) -> String:
-    var minutes := int(seconds / 60.0)
-    var secs := fmod(seconds, 60.0)
-    return "%02d:%05.2f" % [minutes, secs]
+    # Format rounded centiseconds as integer fields so 59.999 seconds rolls over
+    # to 01:00.00 instead of displaying the impossible 00:60.00.
+    var total_centiseconds := maxi(0, int(round(seconds * 100.0)))
+    var minutes := int(total_centiseconds / 6000)
+    var whole_seconds := int((total_centiseconds / 100) % 60)
+    var centiseconds := total_centiseconds % 100
+    return "%02d:%02d.%02d" % [minutes, whole_seconds, centiseconds]
 
 
 func _refresh_hud() -> void:
