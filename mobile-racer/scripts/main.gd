@@ -56,6 +56,7 @@ const ROUTES: Array[Dictionary] = [
 const ROAD_WIDTH := 10.5
 const ROAD_HALF := ROAD_WIDTH * 0.5
 const SAMPLE_STEP := 2.0
+const LANDSCAPE_SAMPLE_STEP := 4.0
 const CRUISE_SPEED := 47.0
 const BOOST_SPEED := 67.0
 const BRAKE_SPEED := 18.0
@@ -570,7 +571,7 @@ func _build_landscape() -> void:
     var kind: String = ROUTES[route_index]["kind"]
     var terrain_tint := Color(0.83, 0.86, 0.77) if kind == "alpine" else (Color(0.50, 0.55, 0.62) if kind == "city" else Color(0.95, 0.94, 0.86))
     var terrain_material := _make_pbr_material("forrest_ground_01", terrain_tint)
-    var rows := int(ceil(route_length / 16.0)) + 1
+    var rows := int(ceil(route_length / LANDSCAPE_SAMPLE_STEP)) + 1
     var lateral_extent := 180.0
     var lateral_step := 6.0
     var columns := int((lateral_extent * 2.0) / lateral_step) + 1
@@ -578,7 +579,7 @@ func _build_landscape() -> void:
     var uvs := PackedVector2Array()
     var indices := PackedInt32Array()
     for row in range(rows):
-        var distance := minf(float(row) * 16.0, route_length)
+        var distance := minf(float(row) * LANDSCAPE_SAMPLE_STEP, route_length)
         var center := _point_at(distance)
         var right := _right_at(distance)
         for col in range(columns):
