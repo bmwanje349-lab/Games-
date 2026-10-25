@@ -27,6 +27,7 @@ func _run_audit() -> void:
     var camera := game.get("chase_camera") as Camera3D
     var course := game.get("course_root") as Node3D
     _expect(is_instance_valid(player), "player node created")
+    _expect(is_equal_approx(float(game.get("lateral_offset")), -2.35), "player starts inside a lane, not on the double-yellow centre line")
     _expect(is_instance_valid(camera), "chase camera created")
     _expect(course != null and course.has_node("PBRAsphaltRoad"), "PBR road created")
     _expect(course != null and course.has_node("ContouredPBRLandscape"), "contoured terrain created")
