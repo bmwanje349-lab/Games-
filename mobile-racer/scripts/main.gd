@@ -74,6 +74,8 @@ var coins_collected := 0
 var race_over := false
 var start_countdown := 3.0
 var steering_touch := 0.0
+var steering_left_held := false
+var steering_right_held := false
 var brake_touch := false
 var boost_touch := false
 var steering_mouse := false
@@ -214,14 +216,45 @@ func _notification(what: int) -> void:
     # Android can interrupt a touch without delivering Button.button_up. Clear
     # held controls on app pause/focus loss so the car cannot keep steering or
     # boosting when the player returns.
-    if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+    if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
         _release_touch_controls()
 
 
 func _release_touch_controls() -> void:
+    steering_left_held = false
+    steering_right_held = false
     steering_touch = 0.0
     brake_touch = false
     boost_touch = false
+
+
+func _update_touch_steering() -> void:
+    if steering_left_held == steering_right_held:
+        steering_touch = 0.0
+    elif steering_left_held:
+        steering_touch = -1.0
+    else:
+        steering_touch = 1.0
+
+
+func _on_left_button_down() -> void:
+    steering_left_held = true
+    _update_touch_steering()
+
+
+func _on_left_button_up() -> void:
+    steering_left_held = false
+    _update_touch_steering()
+
+
+func _on_right_button_down() -> void:
+    steering_right_held = true
+    _update_touch_steering()
+
+
+func _on_right_button_up() -> void:
+    steering_right_held = false
+    _update_touch_steering()
 
 
 func _build_world() -> void:
@@ -1247,11 +1280,11 @@ func _build_hud() -> void:
     nitro_box.add_child(nitro_bar)
 
     var left := _make_button(overlay, "◀", Vector2(25.0, 566.0), Vector2(100.0, 120.0), 34)
-    left.button_down.connect(func(): steering_touch = -1.0)
-    left.button_up.connect(func(): steering_touch = 0.0)
+    left.button_down.connect(_on_left_button_down)
+    left.button_up.connect(_on_left_button_up)
     var right := _make_button(overlay, "▶", Vector2(137.0, 566.0), Vector2(100.0, 120.0), 34)
-    right.button_down.connect(func(): steering_touch = 1.0)
-    right.button_up.connect(func(): steering_touch = 0.0)
+    right.button_down.connect(_on_right_button_down)
+    right.button_up.connect(_on_right_button_up)
 
     var brake := _make_button(overlay, "BRAKE", Vector2(1000.0, 585.0), Vector2(115.0, 88.0), 17)
     brake.button_down.connect(func(): brake_touch = true)
