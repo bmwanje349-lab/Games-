@@ -54,6 +54,7 @@ const ROUTES: Array[Dictionary] = [
 ]
 
 const ROAD_WIDTH := 10.5
+const PLAYER_START_LANE := -2.35
 const ROAD_HALF := ROAD_WIDTH * 0.5
 const SAMPLE_STEP := 2.0
 const LANDSCAPE_SAMPLE_STEP := 4.0
@@ -71,7 +72,7 @@ var route_index := 0
 var car_index := 0
 var route_length := 4800.0
 var travel_distance := 0.0
-var lateral_offset := 0.0
+var lateral_offset := PLAYER_START_LANE
 var current_speed := 0.0
 var elapsed_time := 0.0
 var race_over := false
@@ -837,11 +838,11 @@ func _build_traffic() -> void:
     traffic_nodes.clear()
     var traffic_index := 0
     for distance in range(145, int(route_length) - 100, 295):
-        _create_traffic_car(float(distance), 2.35, traffic_index, 1)
+        _create_traffic_car(float(distance), -2.35, traffic_index, 1)
         traffic_index += 1
     traffic_index = 0
     for distance in range(int(route_length) - 145, 100, -315):
-        _create_traffic_car(float(distance), -2.35, traffic_index + 20, -1)
+        _create_traffic_car(float(distance), 2.35, traffic_index + 20, -1)
         traffic_index += 1
 
 
@@ -1240,7 +1241,7 @@ func _change_route(direction: int) -> void:
 
 func _restart_race(show_message := true) -> void:
     travel_distance = 0.0
-    lateral_offset = 0.0
+    lateral_offset = PLAYER_START_LANE
     current_speed = 0.0
     elapsed_time = 0.0
     race_over = false
