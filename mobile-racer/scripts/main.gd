@@ -966,8 +966,9 @@ func _normalize_car_visual(visual: Node3D, target_length: float) -> void:
     var rotation := Basis(Vector3.UP, yaw)
     var adjusted_low := Vector3(INF, INF, INF)
     var adjusted_high := Vector3(-INF, -INF, -INF)
-    for point in points:
-        var adjusted := rotation * point * factor
+    for point_value in points:
+        var point: Vector3 = point_value
+        var adjusted: Vector3 = rotation * point * factor
         adjusted_low = adjusted_low.min(adjusted)
         adjusted_high = adjusted_high.max(adjusted)
     visual.rotation = Vector3(0.0, yaw, 0.0)
