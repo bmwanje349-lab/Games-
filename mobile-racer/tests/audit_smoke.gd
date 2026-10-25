@@ -34,6 +34,20 @@ func _run_audit() -> void:
     _expect(course != null and course.has_node("MainRoadSurface"), "initial course has road surface")
     _expect(game.get("coin_nodes").size() > 20, "coin pickups generated")
     _expect(game.get("obstacle_nodes").size() > 10, "traffic and obstacles generated")
+    # ResourceLoader must resolve imported GLB paths; exported APKs contain
+    # generated scenes rather than the original source GLB files.
+    for car_path in [
+        "res://assets/cars/zenith_x1.glb",
+        "res://assets/cars/apex_v12r.glb",
+        "res://assets/cars/titan_gt.glb",
+        "res://assets/cars/rallyfox_x.glb",
+        "res://assets/cars/volt_e_rs.glb",
+        "res://assets/cars/phantom_blackline.glb",
+        "res://assets/cars/tempest_roadster.glb",
+        "res://assets/cars/monarch_svr.glb",
+        "res://assets/cars/viper_street_rs.glb",
+    ]:
+        _expect(ResourceLoader.exists(car_path), "imported car resource resolves: " + car_path)
     _expect(String(game.call("_format_time", 59.999)) == "01:00.00", "timer rounds across minute boundary")
     _expect(String(game.call("_format_time", 0.0)) == "00:00.00", "timer formats zero correctly")
 
