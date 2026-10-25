@@ -112,7 +112,7 @@ jobs:
             fi
           done
           grep -Fq "assets/scripts/main.gdc" "$APK_LIST"
-          for texture in asphalt_03_diff_1k.jpg asphalt_03_nor_gl_1k.jpg asphalt_03_rough_1k.jpg gravel_road_diff_1k.jpg gravel_road_nor_gl_1k.jpg gravel_road_rough_1k.jpg forrest_ground_01_diff_1k.jpg forrest_ground_01_nor_gl_1k.jpg forrest_ground_01_rough_1k.jpg; do
+          for texture in asphalt_track_diff_1k.jpg asphalt_track_nor_gl_1k.jpg asphalt_track_rough_1k.jpg gravel_road_diff_1k.jpg gravel_road_nor_gl_1k.jpg gravel_road_rough_1k.jpg forrest_ground_01_diff_1k.jpg forrest_ground_01_nor_gl_1k.jpg forrest_ground_01_rough_1k.jpg; do
             if ! grep -Fq "assets/.godot/imported/${texture}-" "$APK_LIST"; then
               echo "APK is missing imported PBR texture: $texture"
               exit 1
