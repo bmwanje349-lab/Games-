@@ -294,21 +294,24 @@ func _configure_route_environment() -> void:
     sky_mat.sun_angle_max = 18.0
     sky.sky_material = sky_mat
     env.sky = sky
-    env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-    env.ambient_light_energy = 0.75 if route["kind"] != "city" else 0.34
+    # Keep asphalt and other neutral materials from inheriting a strong blue cast
+    # from the procedural sky. The sky remains visible as the background.
+    env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+    env.ambient_light_color = Color(0.24, 0.26, 0.30) if route["kind"] == "city" else Color(0.64, 0.63, 0.60)
+    env.ambient_light_energy = 0.58 if route["kind"] != "city" else 0.72
     env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
     env.tonemap_exposure = 1.12 if route["kind"] == "city" else 1.0
     env.fog_enabled = true
     env.fog_light_color = route["sky_horizon"]
-    env.fog_density = 0.0012 if route["kind"] != "city" else 0.0028
+    env.fog_density = 0.00045 if route["kind"] != "city" else 0.0016
     env.volumetric_fog_enabled = false
     world_environment.environment = env
     if is_instance_valid(key_light):
-        key_light.light_energy = 0.22 if route["kind"] == "city" else 1.35
-        key_light.light_color = Color(0.48, 0.59, 1.0) if route["kind"] == "city" else Color(1.0, 0.91, 0.78)
+        key_light.light_energy = 0.42 if route["kind"] == "city" else 1.28
+        key_light.light_color = Color(0.78, 0.82, 0.90) if route["kind"] == "city" else Color(1.0, 0.93, 0.82)
     if is_instance_valid(fill_light):
-        fill_light.light_energy = 0.62 if route["kind"] == "city" else 0.36
-        fill_light.light_color = Color(0.18, 0.40, 1.0) if route["kind"] == "city" else Color(0.43, 0.64, 1.0)
+        fill_light.light_energy = 0.16 if route["kind"] == "city" else 0.14
+        fill_light.light_color = Color(0.57, 0.63, 0.74) if route["kind"] == "city" else Color(0.76, 0.80, 0.86)
 
 
 func _mat(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
@@ -431,7 +434,7 @@ func _texture_or_null(path: String) -> Texture2D:
 func _make_pbr_material(texture_set: String, tint: Color, uv_scale := Vector3.ONE) -> StandardMaterial3D:
     var material := StandardMaterial3D.new()
     material.albedo_color = tint
-    material.roughness = 0.9
+    material.roughness = 0.96
     material.metallic = 0.0
     material.uv1_scale = uv_scale
     material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
@@ -444,7 +447,7 @@ func _make_pbr_material(texture_set: String, tint: Color, uv_scale := Vector3.ON
     if normal_map != null:
         material.normal_enabled = true
         material.normal_texture = normal_map
-        material.normal_scale = 0.68
+        material.normal_scale = 0.36
     if roughness_map != null:
         material.roughness_texture = roughness_map
         material.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_RED
@@ -454,7 +457,12 @@ func _make_pbr_material(texture_set: String, tint: Color, uv_scale := Vector3.ON
 func _make_asphalt_material(_route: Dictionary) -> Material:
     # Keep the pavement neutral asphalt gray in every environment. The night
     # lighting should color the scene, not turn the actual road surface blue.
-    return _make_pbr_material("asphalt_track", Color(0.92, 0.93, 0.94))
+    # A dark neutral multiply preserves the aggregate pattern while avoiding a
+    # pale blue pavement even on screens with cooler display/lighting balance.
+    var asphalt := _make_pbr_material("asphalt_track", Color(0.70, 0.71, 0.72))
+    asphalt.roughness = 0.97
+    asphalt.metallic = 0.0
+    return asphalt
 
 
 func _build_route_surface() -> void:
@@ -471,10 +479,10 @@ func _build_route_surface() -> void:
     var yellow_paint := _mat(Color(1.0, 0.76, 0.13), 0.72)
     # Real road-edge lines and the double yellow centre line sit only 1.2 cm
     # above the pavement, so they read as painted markings rather than raised bars.
-    _make_ribbon(course_root, "LeftRoadEdgeLine", -ROAD_HALF + 0.12, -ROAD_HALF + 0.30, 0.012, edge_paint)
-    _make_ribbon(course_root, "RightRoadEdgeLine", ROAD_HALF - 0.30, ROAD_HALF - 0.12, 0.012, edge_paint)
-    _make_ribbon(course_root, "CentreYellowLineLeft", -0.20, -0.08, 0.014, yellow_paint)
-    _make_ribbon(course_root, "CentreYellowLineRight", 0.08, 0.20, 0.014, yellow_paint)
+    _make_ribbon(course_root, "LeftRoadEdgeLine", -ROAD_HALF + 0.08, -ROAD_HALF + 0.38, 0.014, edge_paint)
+    _make_ribbon(course_root, "RightRoadEdgeLine", ROAD_HALF - 0.38, ROAD_HALF - 0.08, 0.014, edge_paint)
+    _make_ribbon(course_root, "CentreYellowLineLeft", -0.23, -0.06, 0.016, yellow_paint)
+    _make_ribbon(course_root, "CentreYellowLineRight", 0.06, 0.23, 0.016, yellow_paint)
     _build_guardrails()
 
 
@@ -956,9 +964,11 @@ func _place_player_and_camera(delta: float) -> void:
     if vehicle_forward.length_squared() < 0.001:
         vehicle_forward = road_forward
     player_root.basis = Basis.looking_at(vehicle_forward, Vector3.UP)
-    var cam_target := point - vehicle_forward * 7.6 + Vector3.UP * 2.35
+    # Raise the chase camera and tilt it down enough that the player can read
+    # the actual road surface, center lines, shoulders, and traffic ahead.
+    var cam_target := point - vehicle_forward * 8.8 + Vector3.UP * 6.0
     chase_camera.global_position = chase_camera.global_position.lerp(cam_target, clampf(delta * 5.0, 0.0, 1.0))
-    chase_camera.look_at(point + vehicle_forward * 12.0 + Vector3.UP * 0.65, Vector3.UP)
+    chase_camera.look_at(point + vehicle_forward * 14.0 + Vector3.UP * 0.40, Vector3.UP)
 
 
 func _collect_bounds(node: Node, transform_to_root: Transform3D, points: Array) -> void:
