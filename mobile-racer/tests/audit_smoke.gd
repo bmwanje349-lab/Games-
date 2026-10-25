@@ -34,6 +34,8 @@ func _run_audit() -> void:
     _expect(course != null and course.has_node("MainRoadSurface"), "initial course has road surface")
     _expect(game.get("coin_nodes").size() > 20, "coin pickups generated")
     _expect(game.get("obstacle_nodes").size() > 10, "traffic and obstacles generated")
+    _expect(String(game.call("_format_time", 59.999)) == "01:00.00", "timer rounds across minute boundary")
+    _expect(String(game.call("_format_time", 0.0)) == "00:00.00", "timer formats zero correctly")
 
     # Cycle every model through the real garage loader. The audit is intended to
     # catch missing/broken imported scenes rather than merely count the manifest.
@@ -80,7 +82,32 @@ func _run_audit() -> void:
 
     # An obstacle impact must end the race and keep the crash message.
     game.call("_restart_race", false)
+    _expect(int(game.get("coins_collected")) == 0, "restart resets coin score")
+    if not target_coin.is_empty():
+        _expect(not bool(target_coin["taken"]), "restart makes collected coin available again")
+        var reset_coin_root := target_coin["root"] as Node3D
+        _expect(is_instance_valid(reset_coin_root) and reset_coin_root.visible, "restart makes collected coin visible again")
+
     var obstacles = game.get("obstacle_nodes")
+    var target_boost: Dictionary = {}
+    for obstacle in obstacles:
+        if obstacle["kind"] == "boost":
+            target_boost = obstacle
+            break
+    _expect(not target_boost.is_empty(), "a test boost pad is available")
+    if not target_boost.is_empty():
+        var boost_distance := float(target_boost["original_distance"])
+        var boost_lane := float(target_boost["lane"])
+        game.set("travel_distance", boost_distance)
+        game.set("lateral_offset", boost_lane)
+        game.call("_check_pickups_and_collisions", boost_distance - 1.0, boost_lane)
+        _expect(float(target_boost["distance"]) < 0.0, "boost pad is consumed on pickup")
+        var boost_root := target_boost["root"] as Node3D
+        _expect(is_instance_valid(boost_root) and not boost_root.visible, "used boost pad hides")
+        game.call("_restart_race", false)
+        _expect(is_equal_approx(float(target_boost["distance"]), boost_distance), "restart restores boost distance")
+        _expect(is_instance_valid(boost_root) and boost_root.visible, "restart restores boost pad visibility")
+
     var target_obstacle: Dictionary = {}
     for obstacle in obstacles:
         if obstacle["kind"] != "boost":
