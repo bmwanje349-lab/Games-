@@ -807,7 +807,7 @@ func _build_city_props() -> void:
     _add_instanced_mesh(course_root, "CyanStreetlights", lamp_mesh, _emissive_mat(Color(0.04, 0.68, 1.0), 2.2), cyan_lamp_transforms)
     _add_instanced_mesh(course_root, "AmberStreetlights", lamp_mesh, _emissive_mat(Color(1.0, 0.28, 0.07), 1.9), warm_lamp_transforms)
 
-    func _build_traffic() -> void:
+func _build_traffic() -> void:
     traffic_nodes.clear()
     var traffic_index := 0
     for distance in range(145, int(route_length) - 100, 295):
