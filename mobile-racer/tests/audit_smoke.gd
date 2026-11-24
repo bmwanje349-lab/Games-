@@ -96,8 +96,17 @@ func _run_audit() -> void:
     game.set("current_speed", 22.0)
     game.set("steering_touch", 1.0)
     var old_heading := float(game.get("vehicle_heading"))
+    var old_lane := float(game.get("lateral_offset"))
     game.call("_process", 0.05)
-    _expect(absf(wrapf(float(game.get("vehicle_heading")) - old_heading, -PI, PI)) > 0.001, "steering changes vehicle heading")
+    _expect(absf(wrapf(float(game.get("vehicle_heading")) - old_heading, -PI, PI)) > 0.001, "steering smoothly turns the car")
+    _expect(float(game.get("lateral_offset")) > old_lane, "right steering moves the car to the right")
+    game.set("steering_touch", 0.0)
+    for _step in range(12):
+        game.call("_process", 0.05)
+    _expect(absf(float(game.get("lateral_velocity"))) < 0.01, "car stops sliding after steering is released")
+    var straight_tangent: Vector3 = game.call("_forward_at", float(game.get("travel_distance")))
+    var straight_heading := atan2(straight_tangent.x, -straight_tangent.z)
+    _expect(absf(wrapf(float(game.get("vehicle_heading")) - straight_heading, -PI, PI)) < 0.02, "car straightens after steering is released")
 
     var car_paths := [
         "res://assets/cars/zenith_x1.glb", "res://assets/cars/apex_v12r.glb",
