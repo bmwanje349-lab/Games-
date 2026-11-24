@@ -67,12 +67,11 @@ const ROAD_DASH_LENGTH := 7.0
 const WHEELBASE := 2.65
 const TOP_SPEED_MPS := 52.0
 const ROAD_EDGE_MARGIN := 0.85
-const MAX_CORNERING_ACCEL := 10.5
-const STEERING_INPUT_RESPONSE := 10.0
-const STEERING_RETURN_RESPONSE := 14.0
-const YAW_RESPONSE := 9.0
-const LATERAL_GRIP_ACCEL := 10.0
-const HEADING_STABILITY := 3.0
+const STEERING_INPUT_RESPONSE := 9.0
+const STEERING_RETURN_RESPONSE := 12.0
+const LATERAL_ACCELERATION := 16.0
+const MAX_LATERAL_SPEED_LOW := 2.5
+const MAX_LATERAL_SPEED_HIGH := 5.5
 
 var route_index := 0
 var car_index := 0
@@ -90,7 +89,6 @@ var throttle_touch := false
 var drive_started := false
 var steering_touch := 0.0
 var steering_input := 0.0
-var yaw_rate := 0.0
 var lateral_velocity := 0.0
 var steering_left_held := false
 var steering_right_held := false
@@ -147,65 +145,40 @@ func _process(delta: float) -> void:
     if Input.is_action_pressed("ui_right") or Input.is_key_pressed(KEY_D):
         steer += 1.0
     steer = clampf(steer, -1.0, 1.0)
-    var steering_response := STEERING_INPUT_RESPONSE if absf(steer) > absf(steering_input) else STEERING_RETURN_RESPONSE
-    steering_input = move_toward(steering_input, steer, steering_response * delta)
-
     var braking := brake_touch or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
     var accelerating := throttle_touch or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
     if braking:
-        current_speed = move_toward(current_speed, 0.0, 13.0 * delta)
+        current_speed = move_toward(current_speed, 0.0, 10.5 * delta)
     elif accelerating:
-        var acceleration_ratio := clampf(current_speed / TOP_SPEED_MPS, 0.0, 1.0)
-        var engine_acceleration := lerpf(7.5, 2.8, acceleration_ratio)
-        current_speed = move_toward(current_speed, TOP_SPEED_MPS, engine_acceleration * delta)
+        current_speed = move_toward(current_speed, TOP_SPEED_MPS, 3.6 * delta)
         drive_started = drive_started or current_speed > 0.5
     else:
         current_speed = maxf(0.0, current_speed - (0.18 + current_speed * 0.022) * delta)
     if drive_started:
         elapsed_time += delta
 
-    # Arcade-style steering: steering authority falls with speed and is limited
-    # by available tyre grip, so a small input cannot spin the car at high speed.
+    # Smooth steering input prevents abrupt direction changes on touch screens.
+    var steering_response := STEERING_INPUT_RESPONSE if absf(steer) > absf(steering_input) else STEERING_RETURN_RESPONSE
+    steering_input = move_toward(steering_input, steer, steering_response * delta)
+
+    # Arcade handling: steering builds controlled lateral tyre force. The car
+    # moves across the road without the excessive sideways slide of the old model.
     var speed_ratio := clampf(current_speed / TOP_SPEED_MPS, 0.0, 1.0)
-    var wheel_angle_limit := lerpf(deg_to_rad(29.0), deg_to_rad(11.0), speed_ratio)
-    var wheel_angle := steering_input * wheel_angle_limit
-    var target_yaw_rate := 0.0
-    if current_speed > 0.15:
-        target_yaw_rate = current_speed / WHEELBASE * tan(wheel_angle)
-        var grip_limited_yaw_rate := MAX_CORNERING_ACCEL / maxf(current_speed, 4.0)
-        target_yaw_rate = clampf(target_yaw_rate, -grip_limited_yaw_rate, grip_limited_yaw_rate)
-    yaw_rate = move_toward(yaw_rate, target_yaw_rate, YAW_RESPONSE * delta)
+    var max_lateral_speed := lerpf(MAX_LATERAL_SPEED_LOW, MAX_LATERAL_SPEED_HIGH, speed_ratio)
+    max_lateral_speed = minf(max_lateral_speed, current_speed * 0.28)
+    var target_lateral_velocity := steering_input * max_lateral_speed
+    lateral_velocity = move_toward(lateral_velocity, target_lateral_velocity, LATERAL_ACCELERATION * delta)
 
-    # Feed the road's own curvature into the steering model. This lets the car
-    # follow a bend naturally instead of lagging behind and sliding off the road.
-    var rear_distance := maxf(0.0, travel_distance - 6.0)
-    var ahead_distance := minf(route_length, travel_distance + 6.0)
-    var rear_forward := _forward_at(rear_distance)
-    var ahead_forward := _forward_at(ahead_distance)
-    var road_heading_change := wrapf(
-        atan2(ahead_forward.x, -ahead_forward.z) - atan2(rear_forward.x, -rear_forward.z),
-        -PI,
-        PI
-    )
-    var sample_span := maxf(1.0, ahead_distance - rear_distance)
-    var road_yaw_rate := road_heading_change / sample_span * current_speed
-    var tangent := _forward_at(travel_distance)
-    var road_heading := atan2(tangent.x, -tangent.z)
-    var relative_heading := wrapf(vehicle_heading - road_heading, -PI, PI)
-    vehicle_heading = wrapf(
-        vehicle_heading + (road_yaw_rate + yaw_rate - relative_heading * HEADING_STABILITY) * delta,
-        -PI,
-        PI
-    )
-    relative_heading = wrapf(vehicle_heading - road_heading, -PI, PI)
-
-    # Tyre grip builds lateral velocity gradually and damps it when steering is
-    # released. This avoids instant sideways snapping and uncontrolled drifting.
-    var target_lateral_velocity := current_speed * sin(relative_heading)
-    lateral_velocity = move_toward(lateral_velocity, target_lateral_velocity, LATERAL_GRIP_ACCEL * delta)
     var forward_speed := sqrt(maxf(current_speed * current_speed - lateral_velocity * lateral_velocity, 0.0))
     travel_distance = clampf(travel_distance + forward_speed * delta, 0.0, route_length)
     lateral_offset = clampf(lateral_offset + lateral_velocity * delta, -LANE_LIMIT, LANE_LIMIT)
+
+    # Keep the chassis aligned with its velocity. When steering is released,
+    # lateral grip slows the side movement and the car naturally straightens.
+    var road_forward := _forward_at(travel_distance)
+    var road_heading := atan2(road_forward.x, -road_forward.z)
+    var slip_angle := atan2(lateral_velocity, maxf(forward_speed, 1.0))
+    vehicle_heading = wrapf(road_heading + slip_angle, -PI, PI)
 
     var offroad := absf(lateral_offset) > ROAD_HALF - ROAD_EDGE_MARGIN
     if offroad:
@@ -1301,7 +1274,6 @@ func _restart_race(show_message := true) -> void:
     drive_started = false
     _release_touch_controls()
     steering_input = 0.0
-    yaw_rate = 0.0
     lateral_velocity = 0.0
     vehicle_heading = atan2(_forward_at(0.0).x, -_forward_at(0.0).z)
     current_gear = 1
